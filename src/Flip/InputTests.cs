@@ -287,6 +287,99 @@ internal static class InputTests
         checks["direct_action_args_roundtrip"] = DirectAction.Resolve(
             DirectAction.RequestFromArgs(["--action", "image.png.to.jpg", "--files", directPng]),
             enginesNative).Verdict == DirectAction.Verdict.Accepted;
+        bool directWinOk = false;
+        bool directWinHasRadial = false;
+        bool directWinLabels = false;
+        bool directWinStates = false;
+        bool directWinPartial = false;
+        bool directWinEscapeRequests = false;
+        bool directWinEscapeNotAuto = false;
+        bool directWinHostCancel = false;
+        bool directWinCloseBlocked = false;
+        bool directWinCloseAfterDone = false;
+        bool directWinCancelNoDup = false;
+        bool directWinResults = false;
+        Exception? directWinError = null;
+        var directWinUi = new Thread(() =>
+        {
+            try
+            {
+                _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+                var window = new DirectConversionWindow();
+                directWinOk = window is DirectConversionWindow;
+                directWinHasRadial = window.ConversionView is RadialConversionView;
+                window.BeginConversion([directPng], "jpg");
+                directWinLabels = window.SourceLabel == "foto.png"
+                    && window.TargetFormatDisplay == "JPG"
+                    && window.Phase == RadialConversionPhase.Converting;
+                window.ReportProgress(35, "preparazione");
+                directWinStates = window.Phase == RadialConversionPhase.Converting
+                    && window.ConversionView.Phase == RadialConversionPhase.Converting;
+                window.Complete(true);
+                directWinStates = directWinStates
+                    && window.Phase == RadialConversionPhase.CompletedSuccess;
+                window.Reset();
+                window.BeginConversion([directPdf], "docx", partial.QualityLimits);
+                directWinPartial = !string.IsNullOrWhiteSpace(window.QualityLimitsText)
+                    && window.QualityLimitsText == partial.QualityLimits;
+                int cancelEvents = 0;
+                window.CancelRequested += (_, _) => cancelEvents++;
+                window.BeginConversion(["doc.txt"], "PDF");
+                window.Left = -20000;
+                window.Top = -20000;
+                window.Show();
+                window.ConversionView.Focus();
+                var escapeSource = PresentationSource.FromVisual(window.ConversionView) ?? PresentationSource.FromVisual(window);
+                window.ConversionView.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, escapeSource, 0, Key.Escape)
+                {
+                    RoutedEvent = UIElement.PreviewKeyDownEvent
+                });
+                directWinEscapeRequests = cancelEvents == 1;
+                directWinEscapeNotAuto = window.Phase == RadialConversionPhase.Converting;
+                window.ConfirmCancel();
+                directWinHostCancel = window.Phase == RadialConversionPhase.Cancelled;
+                window.BeginConversion([directPng, directTxt], "PNG");
+                window.Complete(true);
+                window.SetResults([Path.Combine(directFixtureRoot, "uscita.png"), Path.Combine(directFixtureRoot, "uscita2.png")]);
+                directWinResults = window.ResultsText.Contains("uscita.png") && window.ResultsText.Contains("uscita2.png");
+                var windowAfterSuccess = new DirectConversionWindow();
+                windowAfterSuccess.BeginConversion([directTxt], "RTF");
+                windowAfterSuccess.Complete(true);
+                bool closeCancelledAfterSuccess = false;
+                windowAfterSuccess.Closing += (_, e) => closeCancelledAfterSuccess = e.Cancel;
+                windowAfterSuccess.Close();
+                directWinCloseAfterDone = !closeCancelledAfterSuccess;
+                cancelEvents = 0;
+                window.Reset();
+                window.BeginConversion([directTxt], "DOCX");
+                bool closeCancelledWhileBusy = false;
+                window.Closing += (_, e) => closeCancelledWhileBusy = e.Cancel;
+                window.Close();
+                directWinCloseBlocked = closeCancelledWhileBusy
+                    && window.Phase == RadialConversionPhase.Converting
+                    && window.ClosePending
+                    && cancelEvents == 1;
+                window.Close();
+                directWinCancelNoDup = cancelEvents == 1;
+                window.Complete(true);
+            }
+            catch (Exception ex) { directWinError = ex; }
+        });
+        directWinUi.SetApartmentState(ApartmentState.STA);
+        directWinUi.Start();
+        directWinUi.Join();
+        checks["direct_window_sta_created"] = directWinError == null && directWinOk;
+        checks["direct_window_hosts_radial_view"] = directWinHasRadial;
+        checks["direct_window_shows_file_and_format"] = directWinLabels;
+        checks["direct_window_main_state_flow"] = directWinStates;
+        checks["direct_window_partial_limits_visible"] = directWinPartial;
+        checks["direct_window_escape_requests_cancel"] = directWinEscapeRequests;
+        checks["direct_window_escape_not_auto_cancel"] = directWinEscapeNotAuto;
+        checks["direct_window_host_confirms_cancel"] = directWinHostCancel;
+        checks["direct_window_close_deferred_while_busy"] = directWinCloseBlocked;
+        checks["direct_window_cancel_request_not_duplicated"] = directWinCancelNoDup;
+        checks["direct_window_closes_after_completion"] = directWinCloseAfterDone;
+        checks["direct_window_shows_result_paths"] = directWinResults;
         Directory.Delete(directFixtureRoot, true);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
