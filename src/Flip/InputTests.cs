@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Windows;
@@ -246,6 +247,47 @@ internal static class InputTests
         checks["radial_escape_requests_cancel"] = radialUiError == null && cancelRequested;
         checks["radial_escape_not_auto_cancel"] = escapeStillConverting;
         checks["radial_host_cancel_confirms"] = confirmedCancelled;
+        string directFixtureRoot = Path.Combine(Evidence.DirectoryPath, "direct-action-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directFixtureRoot);
+        string directPng = Path.Combine(directFixtureRoot, "foto.png");
+        File.WriteAllBytes(directPng, new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 10, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130 });
+        string directTxt = Path.Combine(directFixtureRoot, "nota.txt");
+        File.WriteAllText(directTxt, "prova direct action", new UTF8Encoding(false));
+        var enginesFull = new DirectAction.EngineSnapshot(true, true, true);
+        var enginesNative = new DirectAction.EngineSnapshot(false, false, false);
+        var valid = DirectAction.Resolve(new DirectAction.Request("image.png.to.jpg", [directPng], false, true), enginesNative);
+        checks["direct_action_valid_png_jpg"] = valid.Verdict == DirectAction.Verdict.Accepted
+            && valid.Operation?.Id == "image.png.to.jpg"
+            && valid.ValidatedFiles.Length == 1
+            && valid.QualityStatus == null;
+        checks["direct_action_unknown_id"] = DirectAction.Resolve(new DirectAction.Request("immagine.xyz.assente", [directPng], false, true), enginesNative).RejectReason == DirectAction.RejectReason.UnknownOperation;
+        checks["direct_action_not_available"] = DirectAction.Resolve(new DirectAction.Request("format.excluded.pages", [directPng], false, true), enginesFull).RejectReason == DirectAction.RejectReason.NotAvailable;
+        string directPdfPairA = Path.Combine(directFixtureRoot, "uno.pdf");
+        string directPdfPairB = Path.Combine(directFixtureRoot, "due.pdf");
+        File.WriteAllBytes(directPdfPairA, [37, 80, 68, 70, 45, 49, 46, 52, 10, 37, 226]);
+        File.WriteAllBytes(directPdfPairB, [37, 80, 68, 70, 45, 49, 46, 52, 10, 37, 227]);
+        checks["direct_action_advanced_pdf"] = DirectAction.Resolve(new DirectAction.Request("pdf.advanced.merge", [directPdfPairA, directPdfPairB], false, true), enginesFull).RejectReason == DirectAction.RejectReason.AdvancedPdfNotImplemented;
+        checks["direct_action_incompatible_extension"] = DirectAction.Resolve(new DirectAction.Request("image.png.to.jpg", [directTxt], false, true), enginesNative).RejectReason == DirectAction.RejectReason.IncompatibleExtension;
+        checks["direct_action_missing_file"] = DirectAction.Resolve(new DirectAction.Request("image.png.to.jpg", [Path.Combine(directFixtureRoot, "inesistente.png")], false, true), enginesNative).RejectReason == DirectAction.RejectReason.InvalidFiles;
+        checks["direct_action_blocked_path"] = DirectAction.Resolve(new DirectAction.Request("image.png.to.jpg", [@"\\server\share\falso.png"], false, true), enginesNative).RejectReason == DirectAction.RejectReason.InvalidFiles;
+        string fakeMp4 = Path.Combine(directFixtureRoot, "clip.mp4");
+        File.WriteAllBytes(fakeMp4, [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+        checks["direct_action_engine_ffmpeg_with_file"] = DirectAction.Resolve(new DirectAction.Request("video.mp4.to.mkv", [fakeMp4], false, true), enginesNative).RejectReason == DirectAction.RejectReason.EngineUnavailable;
+        checks["direct_action_invalid_batch_count"] = DirectAction.Resolve(new DirectAction.Request("image.png.to.jpg", [], false, true), enginesNative).RejectReason == DirectAction.RejectReason.MissingFiles;
+        checks["direct_action_option_conflict"] = DirectAction.Resolve(new DirectAction.Request("image.png.to.jpg", [directPng], true, true), enginesNative).RejectReason == DirectAction.RejectReason.OptionConflict;
+        string directPdf = Path.Combine(directFixtureRoot, "doc.pdf");
+        File.WriteAllBytes(directPdf, [37, 80, 68, 70, 45, 49, 46, 52, 10, 37, 226]);
+        var partial = DirectAction.Resolve(new DirectAction.Request("pdf.pdf.to.docx", [directPdf], false, true), new DirectAction.EngineSnapshot(true, false, false));
+        checks["direct_action_partial_preserves_limits"] = partial.Verdict == DirectAction.Verdict.Accepted
+            && partial.QualityStatus == OperationCatalog.OperationStatus.Partial
+            && !string.IsNullOrWhiteSpace(partial.QualityLimits);
+        long pngTicks = File.GetLastWriteTimeUtc(directPng).Ticks;
+        _ = DirectAction.Resolve(new DirectAction.Request("image.png.to.jpg", [directPng], false, true), enginesNative);
+        checks["direct_action_validation_read_only"] = File.GetLastWriteTimeUtc(directPng).Ticks == pngTicks;
+        checks["direct_action_args_roundtrip"] = DirectAction.Resolve(
+            DirectAction.RequestFromArgs(["--action", "image.png.to.jpg", "--files", directPng]),
+            enginesNative).Verdict == DirectAction.Verdict.Accepted;
+        Directory.Delete(directFixtureRoot, true);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
         return checks.All(c => c.Value) ? 0 : 1;
