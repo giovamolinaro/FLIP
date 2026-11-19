@@ -1,5 +1,9 @@
 using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Interop;
 namespace Flip;
 
 internal static class InputTests
@@ -177,6 +181,71 @@ internal static class InputTests
         try { ConversionEngine.DeleteJob(cleanupRoot, Path.GetDirectoryName(cleanupRoot)!); checks["unowned_cleanup_refused"] = false; }
         catch (IOException) { checks["unowned_cleanup_refused"] = Directory.Exists(cleanupRoot); }
         Directory.Delete(cleanupRoot);
+        var radial = new RadialConversionState();
+        radial.Reset();
+        checks["radial_initial_phase"] = radial.Phase == RadialConversionPhase.Initial && !radial.HasRealPercent && radial.ShownPercent == 0;
+        radial.BeginConversion(["note.txt"], "pdf");
+        checks["radial_begin_converting"] = radial.Phase == RadialConversionPhase.Converting && radial.IsIndeterminate && radial.TargetFormat == "PDF";
+        checks["radial_no_percent_before_data"] = !radial.ShowNumericPercent && radial.ShownPercent == 0;
+        radial.ReportProgress(null, "preparazione");
+        checks["radial_step_without_percent_stays_indeterminate"] = radial.IsIndeterminate && radial.Step == "preparazione";
+        radial.ReportProgress(18, null);
+        checks["radial_real_percent_engaged"] = radial.HasRealPercent && radial.ShowNumericPercent && radial.TargetPercent == 18;
+        radial.ReportProgress(12, null);
+        checks["radial_percent_monotone"] = radial.TargetPercent >= 18;
+        radial.ReportProgress(40, null);
+        radial.AdvanceSmoothing();
+        radial.AdvanceSmoothing();
+        radial.AdvanceSmoothing();
+        int shownMid = radial.ShownPercent;
+        checks["radial_smoothing_never_exceeds_target_before_complete"] = shownMid <= 40 && shownMid >= 18;
+        checks["radial_not_100_before_complete"] = radial.ShownPercent < 100;
+        radial.Complete(true);
+        checks["radial_success_shows_100"] = radial.Phase == RadialConversionPhase.CompletedSuccess && radial.ShownPercent == 100;
+        radial.Reset();
+        radial.BeginConversion(["a.png", "b.png"], "JPG");
+        radial.ReportProgress(55, null);
+        radial.Complete(false);
+        checks["radial_error_not_100"] = radial.Phase == RadialConversionPhase.CompletedError && radial.ShownPercent <= 99;
+        radial.Reset();
+        radial.BeginConversion(["c.wav"], "MP3");
+        checks["radial_cancel_only_when_confirmed"] = radial.Phase == RadialConversionPhase.Converting;
+        radial.Cancel();
+        checks["radial_cancelled_phase"] = radial.Phase == RadialConversionPhase.Cancelled;
+        radial.Reset();
+        checks["radial_reset_clears"] = radial.Phase == RadialConversionPhase.Initial && radial.TargetFormat == "";
+        checks["radial_indeterminate_arc_geometry"] = RadialConversionView.IndeterminateArcData(30).Bounds.Width > 40;
+        bool cancelRequested = false, escapeStillConverting = false, confirmedCancelled = false;
+        Exception? radialUiError = null;
+        var radialUi = new Thread(() =>
+        {
+            try
+            {
+                var view = new RadialConversionView();
+                using var source = new HwndSource(new HwndSourceParameters
+                {
+                    Width = 320,
+                    Height = 320,
+                    PositionX = -32000,
+                    PositionY = -32000,
+                    WindowStyle = 0
+                }) { RootVisual = view };
+                view.BeginConversion(["doc.txt"], "PDF");
+                view.Focus();
+                view.CancelRequested += (_, _) => cancelRequested = true;
+                view.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape) { RoutedEvent = UIElement.PreviewKeyDownEvent });
+                escapeStillConverting = view.Phase == RadialConversionPhase.Converting;
+                view.Cancel();
+                confirmedCancelled = view.Phase == RadialConversionPhase.Cancelled;
+            }
+            catch (Exception ex) { radialUiError = ex; }
+        });
+        radialUi.SetApartmentState(ApartmentState.STA);
+        radialUi.Start();
+        radialUi.Join();
+        checks["radial_escape_requests_cancel"] = radialUiError == null && cancelRequested;
+        checks["radial_escape_not_auto_cancel"] = escapeStillConverting;
+        checks["radial_host_cancel_confirms"] = confirmedCancelled;
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
         return checks.All(c => c.Value) ? 0 : 1;
