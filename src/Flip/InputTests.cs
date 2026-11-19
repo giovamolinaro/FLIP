@@ -99,6 +99,39 @@ internal static class InputTests
         checks["csv_offers_json"] = Policy.Outputs(["tabella.csv"], false, false, false).Contains("JSON");
         checks["mp3_offers_wav_with_ffmpeg"] = Policy.Outputs(["audio.mp3"], false, false, true).Contains("WAV");
         checks["mp4_offers_video_and_audio_with_ffmpeg"] = Policy.Outputs(["clip.mp4"], false, false, true).ToHashSet().SetEquals(new[] { "MP3", "WAV", "MKV", "WEBM", "AVI", "MOV" });
+        checks["catalog_not_empty"] = OperationCatalog.All.Count > 80;
+        checks["catalog_ids_unique"] = OperationCatalog.All.Select(o => o.Id).Distinct().Count() == OperationCatalog.All.Count;
+        var pngToJpg = OperationCatalog.Find("image.png.to.jpg");
+        checks["catalog_png_jpg_native_selectable"] = pngToJpg != null && OperationCatalog.IsSelectable(pngToJpg, 1, false, false, false);
+        var mp4ToMkv = OperationCatalog.Find("video.mp4.to.mkv");
+        checks["catalog_video_needs_ffmpeg"] = mp4ToMkv != null && !OperationCatalog.IsSelectable(mp4ToMkv, 1, true, true, false) && OperationCatalog.IsSelectable(mp4ToMkv, 1, true, true, true);
+        checks["catalog_simple_matches_policy_full_engines"] = OperationCatalog.All
+            .Where(o => o.Kind == OperationCatalog.OperationKind.SimpleConversion && o.Status != OperationCatalog.OperationStatus.NotAvailable)
+            .All(o =>
+            {
+                bool policy = Policy.Outputs(["probe" + o.InputExtensions[0]], true, true, true).Contains(o.OutputFormat);
+                return policy == OperationCatalog.IsSelectable(o, 1, true, true, true);
+            });
+        checks["catalog_advanced_pdf_not_selectable"] = OperationCatalog.All
+            .Where(o => o.Kind == OperationCatalog.OperationKind.AdvancedPdf)
+            .All(o => !OperationCatalog.IsSelectable(o, Math.Max(o.RequiredFileCount, 1), true, true, true));
+        checks["catalog_excluded_formats_absent"] = new[] { "format.excluded.dxf", "format.excluded.pdfa", "format.excluded.ppt", "format.excluded.pptx" }
+            .All(id => OperationCatalog.Find(id) == null);
+        checks["catalog_no_dxf_pdfa_ppt_outputs"] = !OperationCatalog.All.Any(o =>
+            o.OutputFormat is "DXF" or "PDF/A" or "PPT" or "PPTX"
+            || o.InputExtensions.Contains(".dxf", StringComparer.OrdinalIgnoreCase)
+            || o.InputExtensions.Contains(".ppt", StringComparer.OrdinalIgnoreCase)
+            || o.InputExtensions.Contains(".pptx", StringComparer.OrdinalIgnoreCase));
+        checks["catalog_has_simple_and_advanced_kinds"] = OperationCatalog.All.Any(o => o.Kind == OperationCatalog.OperationKind.SimpleConversion && o.Status != OperationCatalog.OperationStatus.NotAvailable)
+            && OperationCatalog.All.Any(o => o.Kind == OperationCatalog.OperationKind.AdvancedPdf);
+        checks["catalog_html_jpg_blocked_without_office"] = OperationCatalog.Find("document.html.to.jpg") is { } htmlJpg
+            && !OperationCatalog.IsSelectable(htmlJpg, 1, true, false, false)
+            && OperationCatalog.IsSelectable(htmlJpg, 1, true, true, false);
+        checks["catalog_pdf_to_docx_partial_with_pandoc"] = OperationCatalog.Find("pdf.pdf.to.docx") is { } pdfDocx
+            && pdfDocx.Status == OperationCatalog.OperationStatus.Partial
+            && OperationCatalog.IsSelectable(pdfDocx, 1, true, false, false);
+        checks["catalog_merge_requires_two_files_still_off"] = OperationCatalog.Find("pdf.advanced.merge") is { } merge
+            && !OperationCatalog.IsSelectable(merge, 2, true, true, true);
         checks["wheel_progress_arc_geometry"] = Wheel.ProgressArcData(50).Bounds.Width > 80 && Wheel.ProgressArcData(95).Bounds.Height > 150;
         checks["update_checker_version_compare"] = UpdateChecker.IsRemoteNewer("0.4.0-beta.3", "v0.5.0") && UpdateChecker.IsRemoteNewer("0.4.0-beta.3", "v0.4.0") && !UpdateChecker.IsRemoteNewer("0.4.0-beta.3", "v0.4.0-beta.3");
         foreach (int count in new[] { 1, 2, 3, 6, 8, 12 })
