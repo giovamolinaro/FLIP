@@ -183,6 +183,7 @@ internal static class InputTests
         Directory.Delete(cleanupRoot);
         AddMenuConversionChecks(checks);
         AddContextMenuPreviewChecks(checks);
+        AddMenuProgressChecks(checks);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
         return checks.All(c => c.Value) ? 0 : 1;
@@ -758,6 +759,296 @@ internal static class InputTests
         return install && commands
             && Program.OpensWheelOnStartup(["--files", photo])
             && !Program.OpensWheelOnStartup(["--install-context-menu"]);
+    }
+
+    static void AddMenuProgressChecks(Dictionary<string, bool> checks)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "flip-m42-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string priorLog = Evidence.DirectoryPath;
+        Evidence.DirectoryPath = Path.Combine(root, "logs");
+        try
+        {
+            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+            string photo = Path.Combine(root, "foto.png");
+            File.WriteAllBytes(photo, png);
+            var engines = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+            Check(checks, "menu_png_to_pdf", () => MenuImageConverts(photo, png, "PDF", engines));
+            Check(checks, "menu_png_to_webp", () => MenuImageConverts(photo, png, "WEBP", engines));
+            Check(checks, "menu_png_progress_waits_for_outcome", () => EngineProgressWaits(photo, png, engines));
+            Check(checks, "menu_progress_unmeasured_stays_indeterminate", () => UnmeasuredStaysIndeterminate(photo));
+            Check(checks, "menu_progress_measured_caps_below_complete", () => MeasuredCapsBelowComplete(photo));
+            Check(checks, "menu_progress_success_only_after_outcome", () => SuccessOnlyAfterOutcome(photo, png));
+            Check(checks, "menu_progress_error_is_not_success", () => ErrorIsNotSuccess(photo, png));
+            Check(checks, "menu_progress_cancel_waits_and_is_isolated", () => CancelWaitsAndIsIsolated(photo, png, engines));
+            Check(checks, "menu_progress_late_update_ignored", () => LateUpdateIgnored(photo));
+            Check(checks, "menu_progress_busy_does_not_cancel_other", () => BusyDoesNotCancelOther());
+            Check(checks, "menu_progress_no_balloon_and_no_wheel", () => MenuSkipsBalloonAndWheel(photo));
+            Check(checks, "menu_preview_graphic_copy_unchanged", () => PreviewCopyUnchanged());
+            Check(checks, "menu_progress_ipc_wire_unchanged", () => ProgressLeavesIpcUnchanged(photo));
+        }
+        finally
+        {
+            Evidence.DirectoryPath = priorLog;
+            try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
+
+    static bool MenuImageConverts(string photo, byte[] original, string format, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string kept = Path.Combine(Path.GetDirectoryName(photo)!, "foto.converted." + format.ToLowerInvariant());
+        File.WriteAllBytes(kept, new byte[] { 9, 9, 9, 9 });
+        var percents = new List<int>();
+        var notes = new List<string>();
+        var outcome = Task.Run(() => MenuConversion.RunExclusive(() => false, _ => { }, () => null, _ => { },
+            new MenuConversion.Request(format, photo),
+            async (path, target, token) =>
+            {
+                var results = await ConversionEngine.Convert(new[] { path }, new[] { target }, token, null, (percent, _) => percents.Add(percent));
+                return results[0];
+            },
+            notes.Add, engines)).GetAwaiter().GetResult();
+        if (!outcome.Succeeded) throw new InvalidOperationException(outcome.Message);
+        var model = MenuProgressModel.Start("foto.png", format, new CancellationTokenSource());
+        foreach (int percent in percents) model.Report(percent);
+        if (model.Phase != MenuProgressModel.View.Indeterminate || model.Percent != null || model.ShowCheck)
+            throw new InvalidOperationException("Percentuali immagine non attese: " + string.Join(",", percents));
+        model.Complete(outcome);
+        string produced = outcome.Output!;
+        return model.Phase == MenuProgressModel.View.Success
+            && model.Percent == 100
+            && model.ShowCheck
+            && model.Folder == outcome.Folder
+            && model.ResultName == Path.GetFileName(produced)
+            && !model.OpensWheel
+            && notes[0] == MenuConversion.StartedMessage(format)
+            && File.Exists(produced)
+            && new FileInfo(produced).Length > 0
+            && !string.Equals(Path.GetFullPath(produced), Path.GetFullPath(photo), StringComparison.OrdinalIgnoreCase)
+            && File.ReadAllBytes(photo).SequenceEqual(original)
+            && File.ReadAllBytes(kept).SequenceEqual(new byte[] { 9, 9, 9, 9 });
+    }
+
+    static bool EngineProgressWaits(string photo, byte[] original, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        var percents = new List<int>();
+        var outcome = Task.Run(() => MenuConversion.Execute(new MenuConversion.Request("JPG", photo),
+            async (path, format, token) =>
+            {
+                var results = await ConversionEngine.Convert(new[] { path }, new[] { format }, token, null, (percent, _) => percents.Add(percent));
+                return results[0];
+            },
+            _ => { }, CancellationToken.None, engines)).GetAwaiter().GetResult();
+        var model = MenuProgressModel.Start("foto.png", "JPG", new CancellationTokenSource());
+        foreach (int percent in percents) model.Report(percent);
+        bool waiting = model.Phase == MenuProgressModel.View.Indeterminate && model.Percent != 100 && !model.ShowCheck && percents.Contains(100);
+        model.Complete(outcome);
+        return waiting
+            && outcome.Succeeded
+            && model.ShowCheck
+            && model.Percent == 100
+            && File.ReadAllBytes(photo).SequenceEqual(original);
+    }
+
+    static bool UnmeasuredStaysIndeterminate(string photo)
+    {
+        var model = MenuProgressModel.Start("foto.png", "JPG", new CancellationTokenSource());
+        bool ignored = !model.Report(2) && !model.Report(25) && !model.Report(35) && !model.Report(100) && !model.Report(0);
+        return ignored
+            && model.Phase == MenuProgressModel.View.Indeterminate
+            && model.Percent == null
+            && !model.ShowCheck
+            && model.FileName == "foto.png"
+            && model.Format == "JPG"
+            && model.Status == MenuProgressWindow.RunningStatus
+            && !string.Equals(Path.GetFileName(photo), "", StringComparison.Ordinal);
+    }
+
+    static bool MeasuredCapsBelowComplete(string photo)
+    {
+        var model = MenuProgressModel.Start("clip.mp4", "MP3", new CancellationTokenSource());
+        bool start = !model.Report(2) && model.Report(5) && model.Percent == 5 && model.Phase == MenuProgressModel.View.Determinate && !model.ShowCheck;
+        bool forward = model.Report(64) && model.Percent == 64;
+        bool capped = !model.Report(100) && model.Percent == 64 && !model.ShowCheck;
+        bool higher = model.Report(96) && model.Percent == 96 && model.Phase == MenuProgressModel.View.Determinate;
+        bool backward = !model.Report(25);
+        string folder = Path.GetDirectoryName(photo)!;
+        var success = new MenuConversion.Outcome(MenuConversion.Status.Success, "Creato clip.mp3 in " + folder + ".", Path.Combine(folder, "clip.mp3"), folder);
+        model.Complete(success);
+        bool done = model.Phase == MenuProgressModel.View.Success && model.Percent == 100 && model.ShowCheck && model.Folder == folder;
+        bool late = !model.Report(80) && model.Percent == 100 && model.ShowCheck;
+        return start && forward && capped && higher && backward && done && late;
+    }
+
+    static bool SuccessOnlyAfterOutcome(string photo, byte[] original)
+    {
+        var pending = MenuProgressModel.Start("foto.png", "JPG", new CancellationTokenSource());
+        pending.Report(90);
+        pending.Report(100);
+        bool notYet = pending.Phase == MenuProgressModel.View.Determinate && pending.Percent == 90 && !pending.ShowCheck;
+        var claimed = new MenuConversion.Outcome(MenuConversion.Status.Error, "Creato finto.jpg in C:\\temp.", null, null);
+        pending.Complete(claimed);
+        bool rejected = pending.Phase == MenuProgressModel.View.Error && !pending.ShowCheck && pending.Percent == null && pending.Detail == claimed.Message;
+        var disguised = MenuConversion.FromResult(photo, new ConversionResult(photo, "JPG", new[] { photo }, null));
+        var guard = MenuProgressModel.Start("foto.png", "JPG", new CancellationTokenSource());
+        guard.Report(98);
+        guard.Complete(disguised);
+        return notYet && rejected && disguised.Status == MenuConversion.Status.Error && guard.Phase == MenuProgressModel.View.Error && !guard.ShowCheck && File.ReadAllBytes(photo).SequenceEqual(original);
+    }
+
+    static bool ErrorIsNotSuccess(string photo, byte[] original)
+    {
+        var model = MenuProgressModel.Start("foto.png", "PDF", new CancellationTokenSource());
+        model.Report(2);
+        model.Report(40);
+        model.Report(100);
+        var failed = new MenuConversion.Outcome(MenuConversion.Status.Error, "Encoder non disponibile.", null, null);
+        model.Complete(failed);
+        bool late = !model.Report(70) && model.Percent == null && !model.ShowCheck;
+        return model.Phase == MenuProgressModel.View.Error
+            && model.Status == MenuProgressWindow.ErrorStatus
+            && model.Detail == failed.Message
+            && late
+            && File.ReadAllBytes(photo).SequenceEqual(original);
+    }
+
+    static bool CancelWaitsAndIsIsolated(string photo, byte[] original, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        bool busy = false;
+        CancellationTokenSource? job = null;
+        var other = new CancellationTokenSource();
+        MenuProgressModel? session = null;
+        bool stillRunning = false;
+        bool isolated = false;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var task = Task.Run(() => MenuConversion.RunExclusive(() => busy, value => busy = value, () => job, value => job = value,
+            new MenuConversion.Request("JPG", photo),
+            async (_, _, token) =>
+            {
+                session = MenuProgressModel.Start("foto.png", "JPG", job);
+                stillRunning = session.Phase == MenuProgressModel.View.Indeterminate && !session.ShowCheck && !session.CancelRequested;
+                session.RequestCancel();
+                isolated = session.CancelRequested
+                    && session.Phase == MenuProgressModel.View.Indeterminate
+                    && !session.ShowCheck
+                    && job!.IsCancellationRequested
+                    && !other.IsCancellationRequested;
+                entered.TrySetResult(true);
+                await Task.Delay(Timeout.Infinite, token);
+                return new ConversionResult(photo, "JPG", Array.Empty<string>(), "non completata");
+            },
+            _ => { }, engines));
+        if (!entered.Task.Wait(TimeSpan.FromSeconds(3))) throw new TimeoutException("Annullamento non avviato.");
+        if (!task.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Annullamento non concluso.");
+        var outcome = task.Result;
+        session!.Complete(outcome);
+        bool late = !session.Report(55) && !session.ShowCheck && session.Percent == null;
+        return stillRunning
+            && isolated
+            && outcome.Status == MenuConversion.Status.Cancelled
+            && !outcome.Succeeded
+            && session.Phase == MenuProgressModel.View.Cancelled
+            && session.Status == MenuProgressWindow.CancelledStatus
+            && late
+            && File.ReadAllBytes(photo).SequenceEqual(original)
+            && !other.IsCancellationRequested;
+    }
+
+    static bool LateUpdateIgnored(string photo)
+    {
+        string folder = Path.GetDirectoryName(photo)!;
+        var done = MenuProgressModel.Start("foto.png", "WEBP", new CancellationTokenSource());
+        done.Report(33);
+        done.Complete(new MenuConversion.Outcome(MenuConversion.Status.Success, "Creato foto.webp in " + folder + ".", Path.Combine(folder, "foto.webp"), folder));
+        bool success = !done.Report(100) && !done.Report(12) && done.Percent == 100 && done.ShowCheck;
+        var stopped = MenuProgressModel.Start("foto.png", "JPG", new CancellationTokenSource());
+        stopped.Report(18);
+        stopped.Complete(new MenuConversion.Outcome(MenuConversion.Status.Cancelled, MenuConversion.CancelledMessage, null, null));
+        bool cancelled = !stopped.Report(99) && stopped.Phase == MenuProgressModel.View.Cancelled && !stopped.ShowCheck && stopped.Percent == null;
+        var failed = MenuProgressModel.Start("foto.png", "PDF", new CancellationTokenSource());
+        failed.Complete(new MenuConversion.Outcome(MenuConversion.Status.Error, "Conversione non riuscita.", null, null));
+        bool error = !failed.Report(100) && failed.Phase == MenuProgressModel.View.Error && !failed.ShowCheck;
+        return success && cancelled && error;
+    }
+
+    static bool BusyDoesNotCancelOther()
+    {
+        var active = new CancellationTokenSource();
+        var running = MenuProgressModel.Start("foto.png", "JPG", active);
+        running.Report(22);
+        var rejected = MenuProgressModel.Reject("altro.png", "PDF", MenuConversion.BusyMessage, busy: true);
+        rejected.RequestCancel();
+        bool router = MenuProgressRouter.Classify(MenuConversion.BusyMessage, true, out _) == MenuProgressRouter.Kind.Busy
+            && MenuProgressRouter.Classify(MenuConversion.StartedMessage("PDF"), true, out _) == MenuProgressRouter.Kind.Ignored
+            && MenuProgressRouter.Classify(MenuConversion.StartedMessage("PDF"), false, out string format) == MenuProgressRouter.Kind.Started
+            && format == "PDF";
+        return !active.IsCancellationRequested
+            && running.Phase == MenuProgressModel.View.Determinate
+            && running.Percent == 22
+            && !running.ShowCheck
+            && rejected.Phase == MenuProgressModel.View.Busy
+            && rejected.Status == MenuConversion.BusyMessage
+            && rejected.Detail == MenuProgressWindow.BusyDetail
+            && !rejected.ShowCheck
+            && rejected.FileName == "altro.png"
+            && router;
+    }
+
+    static bool MenuSkipsBalloonAndWheel(string photo)
+    {
+        int balloons = 0;
+        Action<string> balloon = _ => balloons++;
+        _ = balloon;
+        bool notices = !MenuProgressRouter.UsesBalloon
+            && MenuProgressRouter.Classify(MenuConversion.StartedMessage("JPG"), false, out string format) == MenuProgressRouter.Kind.Started
+            && format == "JPG"
+            && MenuProgressRouter.Classify("Creato foto.jpg in C:\\temp.", true, out _) == MenuProgressRouter.Kind.Ignored
+            && MenuProgressRouter.Classify("File non trovato.", false, out _) == MenuProgressRouter.Kind.Validation
+            && MenuProgressRouter.Classify(MenuConversion.CancelledMessage, true, out _) == MenuProgressRouter.Kind.Ignored;
+        bool wheel = !Program.OpensWheelOnStartup(["--convert-menu", "JPG", "--files", photo])
+            && !Program.OpensWheelOnStartup(["--convert-menu", "PDF", "--files", photo])
+            && !Program.OpensWheelOnStartup(["--convert-menu", "WEBP", "--files", photo])
+            && !Program.OpensPanelOnStartup(["--convert-menu", "JPG", "--files", photo])
+            && !Program.OpensWheelOnStartup(["--preview-menu-progress"])
+            && !Program.OpensPanelOnStartup(["--preview-menu-progress"])
+            && !Program.OpensWheelOnStartup(["--preview-menu-progress", "--files", photo])
+            && !Program.OpensPanelOnStartup(["--preview-menu-progress", "--multi", "--files", photo])
+            && Program.OpensWheelOnStartup(["--files", photo])
+            && Program.OpensPanelOnStartup(["--multi", "--files", photo]);
+        return balloons == 0 && notices && wheel;
+    }
+
+    static bool PreviewCopyUnchanged()
+    {
+        return MenuProgressWindow.CardWidth == 440
+            && MenuProgressWindow.CardHeight == 210
+            && MenuProgressWindow.BarHeight == 4
+            && MenuProgressWindow.PreviewFileName == "foto.png"
+            && MenuProgressWindow.PreviewFormatName == "JPG"
+            && MenuProgressWindow.RunningStatus == "Conversione in corso..."
+            && MenuProgressWindow.PartialPercentText == "40%"
+            && MenuProgressWindow.SuccessStatus == "Conversione completata"
+            && MenuProgressWindow.OpenFolderText == "Apri cartella"
+            && MenuProgressWindow.PreviewOpenTip == "Anteprima: nessuna cartella viene aperta."
+            && MenuProgressWindow.ErrorStatus == "Conversione non riuscita."
+            && MenuProgressWindow.ErrorDetail == "Il file originale non è stato modificato."
+            && MenuProgressWindow.CancelledStatus == "Conversione annullata"
+            && MenuProgressWindow.CancelText == "Annulla"
+            && MenuProgressWindow.CloseText == "Chiudi";
+    }
+
+    static bool ProgressLeavesIpcUnchanged(string photo)
+    {
+        string wire = MenuConversion.Serialize(new MenuConversion.Request("JPG", photo));
+        return !wire.Contains("percent", StringComparison.OrdinalIgnoreCase)
+            && !wire.Contains("progress", StringComparison.OrdinalIgnoreCase)
+            && Ipc.Classify(wire) == Ipc.Kind.Files
+            && Ipc.Classify("exit") == Ipc.Kind.Exit
+            && Ipc.Classify("select") == Ipc.Kind.Select
+            && MenuConversion.MenuPipeName == Program.PipeName + ".menu"
+            && MenuConversion.TryDeserialize(wire, out var request, out _)
+            && request.Format == "JPG"
+            && request.File == photo;
     }
 
     sealed class MenuProbe : MenuConversion.IEndpoint

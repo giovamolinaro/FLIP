@@ -19,6 +19,7 @@ internal static class Program
     {
         try
         {
+            if (args.Contains("--preview-menu-progress")) return MenuProgressWindow.ShowPreview();
             if (args.Contains("--convert-menu")) return MenuConversion.Launch(args, new LiveMenuEndpoint());
             int evidence = Array.IndexOf(args, "--evidence"); if (evidence >= 0) Evidence.DirectoryPath = Path.GetFullPath(OptionValue(args, "--evidence"));
             if (evidence >= 0 || args.Contains("--preview-wheel") || args.Contains("--export-sound")) Directory.CreateDirectory(Evidence.DirectoryPath);
@@ -82,12 +83,12 @@ internal static class Program
     }
     internal static bool OpensWheelOnStartup(string[] args)
     {
-        if (args.Contains("--convert-menu") || args.Contains("--multi") || ContextMenuPreview.IsPreviewCommand(args)) return false;
+        if (args.Contains("--preview-menu-progress") || args.Contains("--convert-menu") || args.Contains("--multi") || ContextMenuPreview.IsPreviewCommand(args)) return false;
         return Array.IndexOf(args, "--files") >= 0;
     }
     internal static bool OpensPanelOnStartup(string[] args)
     {
-        if (args.Contains("--convert-menu") || ContextMenuPreview.IsPreviewCommand(args)) return false;
+        if (args.Contains("--preview-menu-progress") || args.Contains("--convert-menu") || ContextMenuPreview.IsPreviewCommand(args)) return false;
         return args.Contains("--multi") && Array.IndexOf(args, "--files") >= 0;
     }
     sealed class LiveMenuEndpoint : MenuConversion.IEndpoint
@@ -310,17 +311,22 @@ internal sealed class Host : Window, IDisposable
     {
         try
         {
-            if (!MenuConversion.TryParse(args, out var request, out var error)) { Toast(error); return; }
+            if (!MenuConversion.TryParse(args, out var request, out var error))
+            {
+                MenuProgressWindow.ShowLive(MenuProgressModel.Reject("", "", error, busy: false));
+                return;
+            }
             await RunMenu(request);
         }
-        catch (Exception ex) { Toast(ex.Message); }
+        catch (Exception ex) { MenuProgressWindow.ShowLive(MenuProgressModel.Reject(SafeMenuName(args), "", ex.Message, busy: false)); }
     }
     async Task<MenuConversion.Outcome> RunMenu(MenuConversion.Request request)
     {
-        return await MenuConversion.RunExclusive(() => busy, value => busy = value, () => job, value => job = value, request, ConvertOne, Notify, onCompleted: outcome =>
-        {
-            if (outcome.Succeeded && !string.IsNullOrWhiteSpace(outcome.Folder)) lastFolder = outcome.Folder;
-        });
+        var gate = new MenuProgressGate(this);
+        return await MenuConversion.RunExclusive(() => busy, value => busy = value, () => job, value => job = value, request,
+            (path, format, token) => ConvertOne(path, format, token, (percent, _) => gate.Report(percent)),
+            message => gate.Notice(request, message),
+            onCompleted: gate.Complete);
     }
     Task<MenuConversion.Outcome> HandleMenuRequest(MenuConversion.Request request, CancellationToken token)
     {
@@ -328,20 +334,88 @@ internal sealed class Host : Window, IDisposable
         var operation = Dispatcher.InvokeAsync(() => RunMenu(request));
         return operation.Task.Unwrap();
     }
-    async Task<ConversionResult> ConvertOne(string path, string format, CancellationToken token)
+    async Task<ConversionResult> ConvertOne(string path, string format, CancellationToken token, Action<int, string>? percentProgress = null)
     {
-        var results = await Task.Run(() => ConversionEngine.Convert(new[] { path }, new[] { format }, token, null, null), token).ConfigureAwait(false);
+        var results = await Task.Run(() => ConversionEngine.Convert(new[] { path }, new[] { format }, token, null, percentProgress), token).ConfigureAwait(false);
         return results.Count == 1 ? results[0] : new ConversionResult(path, format, Array.Empty<string>(), "Conversione non riuscita.");
     }
-    void Notify(string message)
+    static string SafeMenuName(string[] values)
     {
-        try
+        int index = Array.IndexOf(values, "--files");
+        if (index < 0 || index + 1 >= values.Length) return "";
+        try { return Path.GetFileName(values[index + 1]); }
+        catch (ArgumentException) { return ""; }
+    }
+    sealed class MenuProgressGate
+    {
+        readonly Host host;
+        MenuProgressModel? model;
+        MenuProgressWindow? window;
+        int settled;
+        int progressClosed;
+        internal MenuProgressGate(Host host) { this.host = host; }
+        internal void Notice(MenuConversion.Request request, string message)
         {
-            if (Dispatcher.CheckAccess()) Toast(message);
-            else Dispatcher.Invoke(() => Toast(message));
+            if (Volatile.Read(ref settled) != 0) return;
+            void Apply()
+            {
+                if (Volatile.Read(ref settled) != 0) return;
+                switch (MenuProgressRouter.Classify(message, model != null, out string format))
+                {
+                    case MenuProgressRouter.Kind.Busy:
+                        Volatile.Write(ref settled, 1);
+                        Present(MenuProgressModel.Reject(FileName(request.File), MenuProgressRouter.DisplayFormat(request.Format), message, busy: true));
+                        break;
+                    case MenuProgressRouter.Kind.Started:
+                        model = MenuProgressModel.Start(FileName(request.File), format, host.job);
+                        window = MenuProgressWindow.ShowLive(model);
+                        break;
+                    case MenuProgressRouter.Kind.Validation:
+                        Volatile.Write(ref settled, 1);
+                        Present(MenuProgressModel.Reject(FileName(request.File), MenuProgressRouter.DisplayFormat(request.Format), message, busy: false));
+                        break;
+                }
+            }
+            if (host.Dispatcher.CheckAccess()) Apply();
+            else host.Dispatcher.BeginInvoke(Apply);
         }
-        catch (OperationCanceledException) { }
-        catch (InvalidOperationException) { }
+        internal void Report(int percent)
+        {
+            if (Volatile.Read(ref progressClosed) != 0) return;
+            host.Dispatcher.BeginInvoke(() =>
+            {
+                if (Volatile.Read(ref progressClosed) != 0 || model == null) return;
+                if (!model.Report(percent)) return;
+                window?.Refresh();
+            });
+        }
+        internal void Complete(MenuConversion.Outcome outcome)
+        {
+            if (Interlocked.Exchange(ref settled, 1) != 0) return;
+            Volatile.Write(ref progressClosed, 1);
+            void Apply()
+            {
+                if (outcome.Succeeded && !string.IsNullOrWhiteSpace(outcome.Folder)) host.lastFolder = outcome.Folder;
+                if (model == null) Present(MenuProgressModel.FromOutcome(outcome));
+                else
+                {
+                    model.Complete(outcome);
+                    window?.Refresh();
+                }
+            }
+            if (host.Dispatcher.CheckAccess()) Apply();
+            else host.Dispatcher.BeginInvoke(Apply);
+        }
+        void Present(MenuProgressModel next)
+        {
+            model = next;
+            window = MenuProgressWindow.ShowLive(next);
+        }
+        static string FileName(string path)
+        {
+            try { return Path.GetFileName(path); }
+            catch (ArgumentException) { return ""; }
+        }
     }
     void SavePreferences() { try { preferences.Save(); } catch (Exception ex) { Toast("Impossibile salvare le preferenze: " + ex.Message); } }
     void QuickSelect()
