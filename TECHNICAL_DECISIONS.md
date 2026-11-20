@@ -29,3 +29,23 @@ The installer enables quiet per-user startup by default, without an administrato
 Source exports include only committed reviewed files. Cache, evidence, backups, downloaded tools, runtime binaries and logs are excluded. MIT covers Flip's own assets/code; third-party obligations are separate.
 
 References: [Raw keyboard](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawkeyboard), [startup](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys), [SoundPlayer](https://learn.microsoft.com/en-us/dotnet/api/system.media.soundplayer?view=net-10.0), [LibreOffice security](https://www.libreoffice.org/security/).
+
+---
+
+## Definitive product architecture (approved)
+
+**Authoritative document:** [docs/FINAL-ARCHITECTURE.md](docs/FINAL-ARCHITECTURE.md)
+
+The sections above (platform/input, dynamic visual feedback, build/publication references to tray/startup/hooks/wheel audio) describe **historical and in-tree behavior** retained for context and migration. For the **final shipped product**, the following decisions are binding:
+
+- Context-menu-only delivery: primary entry **Converti con Flip**, submenu of **actually available** output formats, premium icons, unchanged **M4** central conversion window.
+- **No** selection wheel, wheel sound, conversion gestures, wheel drag-and-drop, permanent tray, Windows startup registration, or idle resident FLIP process.
+- **Ephemeral process:** start on conversion request; exit after M4 completes; concurrent requests handled per M6.
+- **Original files** remain protected; per-user **HKCU** installation; **Windows 10 and 11**.
+- **FLIP Setup Manager** menu `[1]`–`[6]`, `[0]`, with dynamic `[3]` for enable/disable context menu (or install prompt when not installed), refreshed in-session without restarting PowerShell.
+- **Uninstall** removes FLIP-owned shell entries, installed binaries/icons, and non-shared install state; does not blindly wipe `%LOCALAPPDATA%\Flip`; separate confirmation for logs/preferences; never deletes user conversions or shared external engines.
+- **Update/rollback:** backup before update, preserve menu active/inactive state, restore FLIP registry keys, optional prior version restore, foreign-key collision checks, no deletion of personal files, no false atomicity claims.
+- **Single PowerShell entry** to the Setup Manager; HTTPS download, Authenticode/trust and integrity checks, PS 5.1/7 compatibility; avoid `Invoke-Expression` on downloaded content—final bootstrap in **M7**.
+- **Pandoc, LibreOffice, FFmpeg** remain optional; native conversions must work without them; menu shows only available targets.
+
+Implementation sequencing: [ROADMAP.md](ROADMAP.md) (M5.1–M7). M6 removes wheel/tray/startup/dead code; M7 delivers installable package and Setup Manager.
