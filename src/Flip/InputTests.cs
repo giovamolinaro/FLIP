@@ -99,6 +99,43 @@ internal static class InputTests
         checks["csv_offers_json"] = Policy.Outputs(["tabella.csv"], false, false, false).Contains("JSON");
         checks["mp3_offers_wav_with_ffmpeg"] = Policy.Outputs(["audio.mp3"], false, false, true).Contains("WAV");
         checks["mp4_offers_video_and_audio_with_ffmpeg"] = Policy.Outputs(["clip.mp4"], false, false, true).ToHashSet().SetEquals(new[] { "MP3", "WAV", "MKV", "WEBM", "AVI", "MOV" });
+        var nativeEngines = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        var fullEngines = new ContextMenuCatalog.EngineSnapshot(true, true, true);
+        var pngNative = ContextMenuCatalog.ForExtension(".png", nativeEngines);
+        checks["context_png_offers_jpg_pdf_webp_native"] = pngNative.Select(e => e.TargetFormat).ToHashSet().SetEquals(new[] { "JPG", "PDF", "WEBP", "BMP", "TIFF", "GIF" })
+            && Wheel.OrderFormats(Policy.Outputs(["flip.context.png"], false, false, false)).SequenceEqual(pngNative.Select(e => e.TargetFormat));
+        checks["context_pdf_outputs_with_pandoc"] = ContextMenuCatalog.ForExtension(".pdf", new ContextMenuCatalog.EngineSnapshot(true, false, false))
+            .Select(e => e.TargetFormat).ToHashSet().SetEquals(Policy.Outputs(["flip.context.pdf"], true, false, false).ToHashSet());
+        checks["context_docx_outputs_with_document_tools"] = ContextMenuCatalog.ForExtension(".docx", fullEngines)
+            .Select(e => e.TargetFormat).ToHashSet().SetEquals(Policy.Outputs(["flip.context.docx"], true, true, true).ToHashSet());
+        checks["context_equivalent_extensions_skip_same_format"] =
+            !ContextMenuCatalog.ForExtension(".jpeg", nativeEngines).Any(e => e.TargetFormat == "JPG")
+            && !ContextMenuCatalog.ForExtension(".jpg", nativeEngines).Any(e => e.TargetFormat == "JPG")
+            && !ContextMenuCatalog.ForExtension(".tif", nativeEngines).Any(e => e.TargetFormat == "TIFF")
+            && !ContextMenuCatalog.ForExtension(".htm", fullEngines).Any(e => e.TargetFormat == "HTML")
+            && !ContextMenuCatalog.ForExtension(".markdown", fullEngines).Any(e => e.TargetFormat == "MD")
+            && !ContextMenuCatalog.ForExtension(".yml", nativeEngines).Any(e => e.TargetFormat == "YAML");
+        checks["context_all_engine_combinations_match_policy"] = ContextMenuCatalog.EngineSnapshot.AllCombinations().All(engines =>
+            ContextMenuCatalog.SupportedSourceExtensions().All(ext =>
+            {
+                var policy = Wheel.OrderFormats(Policy.Outputs(["flip.context" + ext], engines.Pandoc, engines.Office, engines.Ffmpeg));
+                var catalog = ContextMenuCatalog.ForExtension(ext, engines).Select(e => e.TargetFormat).ToArray();
+                return policy.SequenceEqual(catalog);
+            }));
+        var contextMenu = ContextMenuCatalog.BuildMenu(fullEngines);
+        checks["context_build_omits_extensions_without_conversions"] = !contextMenu.ContainsKey(".dxf") && !contextMenu.ContainsKey(".pages")
+            && !ContextMenuCatalog.BuildMenu(nativeEngines).ContainsKey(".mp3")
+            && ContextMenuCatalog.ForExtension(".mp3", fullEngines).Length > 0;
+        checks["context_no_forbidden_targets"] = contextMenu.Values
+            .SelectMany(e => e)
+            .All(e => e.TargetFormat is not ("DXF" or "PDF/A" or "PPT" or "PPTX" or "PAGES"));
+        checks["context_entry_ids_unique"] = contextMenu.Values.SelectMany(e => e).Select(e => e.Id).Distinct().Count()
+            == contextMenu.Values.SelectMany(e => e).Count();
+        checks["context_icon_ids_follow_format"] = pngNative.First(e => e.TargetFormat == "JPG").IconId == "format.jpg"
+            && pngNative.First(e => e.TargetFormat == "WEBP").IconId == "format.webp";
+        checks["context_file_api_matches_extension"] = ContextMenuCatalog.ForFile("sample.png", nativeEngines).Select(e => e.Id)
+            .SequenceEqual(pngNative.Select(e => e.Id));
+        checks["context_unknown_extension_empty"] = ContextMenuCatalog.ForExtension(".dxf", fullEngines).Length == 0;
         checks["wheel_progress_arc_geometry"] = Wheel.ProgressArcData(50).Bounds.Width > 80 && Wheel.ProgressArcData(95).Bounds.Height > 150;
         checks["update_checker_version_compare"] = UpdateChecker.IsRemoteNewer("0.4.0-beta.3", "v0.5.0") && UpdateChecker.IsRemoteNewer("0.4.0-beta.3", "v0.4.0") && !UpdateChecker.IsRemoteNewer("0.4.0-beta.3", "v0.4.0-beta.3");
         foreach (int count in new[] { 1, 2, 3, 6, 8, 12 })
