@@ -139,7 +139,7 @@ internal static class ContextMenuPreview
         }
     }
 
-    static void ValidateExecutable(string executable)
+    internal static void ValidateExecutable(string executable)
     {
         if (string.IsNullOrWhiteSpace(executable) || !Path.IsPathRooted(executable) || executable.IndexOf('"') >= 0)
             throw new IOException("Percorso eseguibile non valido.");
@@ -225,21 +225,24 @@ internal interface IRegistryStore
 
 internal sealed class ContextMenuPlan
 {
-    internal ContextMenuPlan(string executable, string[] formats, IReadOnlyList<RegistryValue> values)
+    readonly Func<string, string> verbKey;
+
+    internal ContextMenuPlan(string executable, string[] formats, IReadOnlyList<RegistryValue> values, Func<string, string>? verbKey = null)
     {
         Executable = executable;
         Formats = formats;
         Values = values;
         Keys = values.Select(value => value.Key).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        this.verbKey = verbKey ?? ContextMenuPreview.VerbKey;
     }
 
     internal string Executable { get; }
     internal IReadOnlyList<string> Formats { get; }
     internal IReadOnlyList<RegistryValue> Values { get; }
     internal IReadOnlyList<string> Keys { get; }
-    internal string Command(string format) => Required(ContextMenuPreview.VerbKey(format) + @"\command", "");
-    internal string Icon(string format) => Required(ContextMenuPreview.VerbKey(format), "Icon");
-    internal string VerbTitle(string format) => Required(ContextMenuPreview.VerbKey(format), "MUIVerb");
+    internal string Command(string format) => Required(verbKey(format) + @"\command", "");
+    internal string Icon(string format) => Required(verbKey(format), "Icon");
+    internal string VerbTitle(string format) => Required(verbKey(format), "MUIVerb");
     internal string Value(string key, string name) => Required(key, name);
 
     string Required(string key, string name)

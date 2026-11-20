@@ -183,6 +183,7 @@ internal static class InputTests
         Directory.Delete(cleanupRoot);
         AddMenuConversionChecks(checks);
         AddContextMenuPreviewChecks(checks);
+        AddContextMenuNextChecks(checks);
         AddMenuProgressChecks(checks);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
@@ -759,6 +760,196 @@ internal static class InputTests
         return install && commands
             && Program.OpensWheelOnStartup(["--files", photo])
             && !Program.OpensWheelOnStartup(["--install-context-menu"]);
+    }
+
+    static void AddContextMenuNextChecks(Dictionary<string, bool> checks)
+    {
+        var native = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        string exe = @"C:\Programmi Flip\Flip.exe";
+        string photo = @"C:\My Photos\foto.png";
+        string stable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Flip", "Flip.exe");
+        Check(checks, "next_png_three_formats_catalog", () => NextFormats(native, exe));
+        Check(checks, "next_parent_without_anteprima", () => NextParentLabel(native, exe));
+        Check(checks, "next_quotes_paths_with_spaces", () => NextQuotes(native, exe, photo));
+        Check(checks, "next_icons_premium_v2", () => NextIcons(native, exe));
+        Check(checks, "next_path_security_bin_obj", () => NextRejectsBinObj(native));
+        Check(checks, "next_path_allows_stable_and_lab", () => NextAllowsStableAndLab(native, stable));
+        Check(checks, "next_simulated_path_allowed", () => NextSimulatedPath(native, exe));
+        Check(checks, "next_original_and_preview_unchanged", () => NextForeignMenusUntouched(native, exe));
+        Check(checks, "next_distinct_from_preview_keys", () => NextDistinctFromPreview(native, exe));
+        Check(checks, "next_install_idempotent", () => NextIdempotent(native, exe));
+        Check(checks, "next_collision_refused", () => NextCollisionRefused(native, exe));
+        Check(checks, "next_backup_restore_reversible", () => NextBackupRestore(native, exe));
+        Check(checks, "next_does_not_open_wheel", () => NextDoesNotOpenWheel(photo));
+        Check(checks, "next_preview_plan_unchanged", () => NextLeavesPreviewPlan(native, exe));
+    }
+
+    static ContextMenuPlan NextPlan(ContextMenuCatalog.EngineSnapshot engines, string exe) =>
+        ContextMenuNext.CreatePlan(exe, engines);
+
+    static bool NextFormats(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var offered = ContextMenuCatalog.ForExtension(".png", engines).Select(entry => entry.TargetFormat).ToHashSet(StringComparer.Ordinal);
+        var plan = NextPlan(engines, exe);
+        bool catalog = plan.Formats.Count == 3
+            && new[] { "JPG", "PDF", "WEBP" }.All(offered.Contains)
+            && plan.Formats.All(format => offered.Contains(format));
+        bool titles = plan.Formats.All(format =>
+            ContextMenuCatalog.ForExtension(".png", engines).Any(entry => entry.TargetFormat == format && entry.Title == plan.VerbTitle(format)));
+        bool shape = plan.Formats.SequenceEqual(ContextMenuNext.Formats)
+            && plan.Value(ContextMenuNext.ParentKey, ContextMenuNext.OwnerValue) == ContextMenuNext.MenuId
+            && !plan.Keys.Contains(ContextMenuNext.ParentKey + @"\command")
+            && plan.Keys.All(key => key.StartsWith(ContextMenuNext.ParentKey, StringComparison.OrdinalIgnoreCase));
+        return catalog && titles && shape && plan.Keys.Count == 8;
+    }
+
+    static bool NextParentLabel(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        var preview = PreviewPlan(engines, exe);
+        return plan.Value(ContextMenuNext.ParentKey, "MUIVerb") == "Converti con Flip"
+            && plan.Value(ContextMenuNext.ParentKey, "ExtendedSubCommandsKey") == ContextMenuNext.SubCommandsPath
+            && preview.Value(ContextMenuPreview.ParentKey, "MUIVerb") == ContextMenuPreview.ParentVerb;
+    }
+
+    static bool NextQuotes(ContextMenuCatalog.EngineSnapshot engines, string exe, string photo)
+    {
+        var plan = NextPlan(engines, exe);
+        bool commands = ContextMenuNext.Formats.All(format =>
+        {
+            string command = plan.Command(format);
+            string expected = "\"" + exe + "\" --convert-menu " + format + " --files \"%1\"";
+            return command == expected
+                && MenuConversion.TryParse(["--convert-menu", format, "--files", photo], out var request, out _)
+                && request.Format == format
+                && request.File == photo;
+        });
+        bool icons = ContextMenuNext.Formats.All(format =>
+        {
+            string icon = plan.Icon(format);
+            return icon == @"C:\Programmi Flip\" + ContextMenuPreview.IconFileName(format)
+                && icon.IndexOf('"') < 0;
+        });
+        return commands && icons;
+    }
+
+    static bool NextIcons(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        return ContextMenuNext.Formats.All(format =>
+        {
+            string icon = plan.Icon(format);
+            return icon.EndsWith(ContextMenuPreview.IconFileName(format), StringComparison.OrdinalIgnoreCase)
+                && ContextMenuPreview.IconIsValid(Path.Combine(AppContext.BaseDirectory, ContextMenuPreview.IconFileName(format)));
+        });
+    }
+
+    static bool NextRejectsBinObj(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        bool binRejected = false;
+        bool objRejected = false;
+        try { ContextMenuNext.CreatePlan(@"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe", engines); }
+        catch (IOException) { binRejected = true; }
+        try { ContextMenuNext.CreatePlan(@"C:\dev\FLIP\src\Flip\obj\Release\net10.0-windows\Flip.exe", engines); }
+        catch (IOException) { objRejected = true; }
+        return binRejected && objRejected;
+    }
+
+    static bool NextAllowsStableAndLab(ContextMenuCatalog.EngineSnapshot engines, string stable)
+    {
+        var stablePlan = ContextMenuNext.CreatePlan(stable, engines);
+        string lab = Path.Combine(Path.GetTempPath(), "Flip-Lab", "Flip.exe");
+        var labPlan = ContextMenuNext.CreatePlan(lab, engines);
+        return ContextMenuNext.IsStableInstallPath(stable)
+            && ContextMenuNext.IsLaboratoryPath(lab)
+            && stablePlan.Keys.Count == 8
+            && labPlan.Keys.Count == 8;
+    }
+
+    static bool NextSimulatedPath(ContextMenuCatalog.EngineSnapshot engines, string exe) =>
+        NextPlan(engines, exe).Keys.Count == 8;
+
+    static bool NextForeignMenusUntouched(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        if (plan.Keys.Any(key => key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith(ContextMenuPreview.OriginalMenuKey + @"\", StringComparison.OrdinalIgnoreCase)
+            || key.Equals(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith(ContextMenuPreview.ParentKey + @"\", StringComparison.OrdinalIgnoreCase))) return false;
+        var store = new MemoryRegistryStore();
+        store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+        store.Write(ContextMenuPreview.ParentKey, "MUIVerb", ContextMenuPreview.ParentVerb);
+        store.Write(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue, ContextMenuPreview.PrototypeId);
+        string beforeOriginal = store.Read(ContextMenuPreview.OriginalMenuKey, "")!;
+        string beforePreview = store.Read(ContextMenuPreview.ParentKey, "MUIVerb")!;
+        ContextMenuNext.Install(plan, store);
+        bool kept = store.Read(ContextMenuPreview.OriginalMenuKey, "") == beforeOriginal
+            && store.Read(ContextMenuPreview.ParentKey, "MUIVerb") == beforePreview
+            && store.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId;
+        ContextMenuNext.Remove(store);
+        return kept;
+    }
+
+    static bool NextDistinctFromPreview(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var next = NextPlan(engines, exe);
+        var preview = PreviewPlan(engines, exe);
+        bool disjoint = !next.Keys.Any(key => preview.Keys.Contains(key, StringComparer.OrdinalIgnoreCase));
+        bool ids = ContextMenuNext.MenuId != ContextMenuPreview.PrototypeId
+            && next.Value(ContextMenuNext.ParentKey, "MUIVerb") != preview.Value(ContextMenuPreview.ParentKey, "MUIVerb");
+        return disjoint && ids && next.Keys.Count == preview.Keys.Count;
+    }
+
+    static bool NextIdempotent(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        var store = new MemoryRegistryStore();
+        ContextMenuNext.Install(plan, store);
+        string once = store.Export();
+        ContextMenuNext.Install(plan, store);
+        return store.Export() == once && store.KeyCount == 8;
+    }
+
+    static bool NextCollisionRefused(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        var foreign = new MemoryRegistryStore();
+        foreign.Write(ContextMenuNext.ParentKey, "MUIVerb", "Altro");
+        string before = foreign.Export();
+        try { ContextMenuNext.Install(plan, foreign); return false; }
+        catch (IOException) { return foreign.Export() == before; }
+    }
+
+    static bool NextBackupRestore(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        var store = new MemoryRegistryStore();
+        ContextMenuNext.Install(plan, store);
+        store.Write(ContextMenuNext.ParentKey, "MUIVerb", "Personalizzato");
+        var backup = ContextMenuNext.CaptureBackup(plan, store);
+        ContextMenuNext.Install(plan, store);
+        bool reset = store.Read(ContextMenuNext.ParentKey, "MUIVerb") == "Converti con Flip";
+        ContextMenuNext.Remove(store);
+        ContextMenuNext.RestoreBackup(backup, store);
+        bool restored = store.Read(ContextMenuNext.ParentKey, "MUIVerb") == "Personalizzato"
+            && store.Read(ContextMenuNext.ParentKey, ContextMenuNext.OwnerValue) == ContextMenuNext.MenuId;
+        return backup.Entries.Count == plan.Keys.Count && reset && restored;
+    }
+
+    static bool NextDoesNotOpenWheel(string photo) =>
+        ContextMenuNext.Formats.All(format =>
+            !Program.OpensWheelOnStartup(["--convert-menu", format, "--files", photo])
+            && !Program.OpensPanelOnStartup(["--convert-menu", format, "--multi", "--files", photo]));
+
+    static bool NextLeavesPreviewPlan(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        string Snapshot(ContextMenuPlan plan) => JsonSerializer.Serialize(
+            plan.Values.Select(value => new { value.Key, value.Name, value.Data })
+                .OrderBy(value => value.Key, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(value => value.Name, StringComparer.OrdinalIgnoreCase));
+        string previewBefore = Snapshot(PreviewPlan(engines, exe));
+        NextPlan(engines, exe);
+        return Snapshot(PreviewPlan(engines, exe)) == previewBefore;
     }
 
     static void AddMenuProgressChecks(Dictionary<string, bool> checks)
