@@ -182,6 +182,7 @@ internal static class InputTests
         catch (IOException) { checks["unowned_cleanup_refused"] = Directory.Exists(cleanupRoot); }
         Directory.Delete(cleanupRoot);
         AddMenuConversionChecks(checks);
+        AddContextMenuPreviewChecks(checks);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
         return checks.All(c => c.Value) ? 0 : 1;
@@ -541,6 +542,222 @@ internal static class InputTests
             && File.Exists(output);
         stop.Cancel();
         try { await serve.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch (OperationCanceledException) { }
+    }
+
+    static void AddContextMenuPreviewChecks(Dictionary<string, bool> checks)
+    {
+        var native = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        string exe = @"C:\Programmi Flip\Flip.exe";
+        string photo = @"C:\My Photos\foto.png";
+        Check(checks, "preview_png_formats_jpg_pdf_webp", () => PreviewFormats(native, exe));
+        Check(checks, "preview_excludes_other_png_outputs", () => PreviewExcludesOthers(native, exe));
+        Check(checks, "preview_quotes_paths_with_spaces", () => PreviewQuotes(native, exe, photo));
+        Check(checks, "preview_icons_present_and_valid", () => PreviewIcons(native, exe));
+        Check(checks, "preview_original_menu_unchanged", () => PreviewOriginalUntouched(native, exe));
+        Check(checks, "preview_install_idempotent", () => PreviewIdempotent(native, exe));
+        Check(checks, "preview_remove_owned_keys_only", () => PreviewRemoveOwnedOnly(native, exe));
+        Check(checks, "preview_collision_refused", () => PreviewCollisionRefused(native, exe));
+        Check(checks, "preview_does_not_open_wheel", () => PreviewDoesNotOpenWheel(photo));
+    }
+
+    static ContextMenuPlan PreviewPlan(ContextMenuCatalog.EngineSnapshot engines, string exe) =>
+        ContextMenuPreview.CreatePlan(exe, engines);
+
+    static bool PreviewFormats(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var offered = ContextMenuCatalog.ForExtension(".png", engines).Select(entry => entry.TargetFormat).ToHashSet(StringComparer.Ordinal);
+        var plan = PreviewPlan(engines, exe);
+        bool catalog = new[] { "JPG", "PDF", "WEBP" }.All(offered.Contains);
+        bool shape = plan.Formats.SequenceEqual(ContextMenuPreview.Formats)
+            && plan.Value(ContextMenuPreview.ParentKey, "MUIVerb") == ContextMenuPreview.ParentVerb
+            && plan.Value(ContextMenuPreview.ParentKey, "ExtendedSubCommandsKey") == ContextMenuPreview.SubCommandsPath
+            && plan.Value(ContextMenuPreview.ParentKey, "MultiSelectModel") == "Single"
+            && plan.Value(ContextMenuPreview.ParentKey, "NeverDefault") == ""
+            && plan.Value(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId
+            && !plan.Values.Any(value => value.Key.Equals(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase) && value.Name.Length == 0)
+            && !plan.Keys.Contains(ContextMenuPreview.ParentKey + @"\command")
+            && plan.Keys.All(key => key.StartsWith(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase))
+            && plan.Formats.All(format => plan.VerbTitle(format) == "Converti in " + format
+                && plan.Value(ContextMenuPreview.VerbKey(format), "MultiSelectModel") == "Single"
+                && plan.Value(ContextMenuPreview.VerbKey(format), "NeverDefault") == "");
+        bool dllRejected = false;
+        try { ContextMenuPreview.CreatePlan(@"C:\Programmi Flip\Flip.dll", engines); }
+        catch (IOException) { dllRejected = true; }
+        return catalog && shape && dllRejected && plan.Keys.Count == 8;
+    }
+
+    static bool PreviewExcludesOthers(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var offered = ContextMenuCatalog.ForExtension(".png", engines).Select(entry => entry.TargetFormat).ToHashSet(StringComparer.Ordinal);
+        var plan = PreviewPlan(engines, exe);
+        bool extrasAvailable = new[] { "BMP", "TIFF", "GIF" }.All(offered.Contains);
+        bool absent = new[] { "BMP", "TIFF", "GIF", "PNG", "DOCX" }.All(format =>
+            !plan.Formats.Contains(format)
+            && !plan.Values.Any(value => value.Data.Contains("--convert-menu " + format, StringComparison.Ordinal)));
+        bool pngOnly = plan.Keys.All(key => key.StartsWith(@"Software\Classes\SystemFileAssociations\.png\shell\Flip.Convert.Preview", StringComparison.OrdinalIgnoreCase))
+            && !plan.Keys.Any(key => key.Contains(@"\*\shell\Flip.Convert", StringComparison.OrdinalIgnoreCase) && !key.Contains("Flip.Convert.Preview", StringComparison.OrdinalIgnoreCase));
+        return extrasAvailable && absent && pngOnly;
+    }
+
+    static bool PreviewQuotes(ContextMenuCatalog.EngineSnapshot engines, string exe, string photo)
+    {
+        var plan = PreviewPlan(engines, exe);
+        bool commands = ContextMenuPreview.Formats.All(format =>
+        {
+            string command = plan.Command(format);
+            string expected = "\"" + exe + "\" --convert-menu " + format + " --files \"%1\"";
+            return command == expected
+                && MenuConversion.TryParse(["--convert-menu", format, "--files", photo], out var request, out _)
+                && request.Format == format
+                && request.File == photo;
+        });
+        bool icons = ContextMenuPreview.Formats.All(format =>
+        {
+            string icon = plan.Icon(format);
+            return icon == @"C:\Programmi Flip\" + ContextMenuPreview.IconFileName(format)
+                && icon.IndexOf('"') < 0;
+        });
+        return commands && icons;
+    }
+
+    static bool PreviewIcons(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = PreviewPlan(engines, exe);
+        string directory = AppContext.BaseDirectory;
+        var hashes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string format in ContextMenuPreview.Formats)
+        {
+            string path = Path.Combine(directory, ContextMenuPreview.IconFileName(format));
+            if (!ContextMenuPreview.IconIsValid(path) || !plan.Icon(format).EndsWith(ContextMenuPreview.IconFileName(format), StringComparison.OrdinalIgnoreCase)) return false;
+            hashes.Add(Convert.ToHexString(File.ReadAllBytes(path)));
+        }
+        string application = Path.Combine(directory, "Flip.ico");
+        if (!File.Exists(application)) return false;
+        hashes.Add(Convert.ToHexString(File.ReadAllBytes(application)));
+        return hashes.Count == 4;
+    }
+
+    static bool PreviewOriginalUntouched(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = PreviewPlan(engines, exe);
+        if (plan.Keys.Any(key => key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith(ContextMenuPreview.OriginalMenuKey + @"\", StringComparison.OrdinalIgnoreCase))) return false;
+        var store = new MemoryRegistryStore();
+        string commandKey = ContextMenuPreview.OriginalMenuKey + @"\command";
+        store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+        store.Write(ContextMenuPreview.OriginalMenuKey, "MultiSelectModel", "Single");
+        store.Write(ContextMenuPreview.OriginalMenuKey, "Icon", @"C:\Program Files\Flip\Flip.exe,0");
+        store.Write(commandKey, "", "\"C:\\Program Files\\Flip\\Flip.exe\" --files \"%1\"");
+        string before = store.Export();
+        ContextMenuPreview.Install(plan, store);
+        bool kept = store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+            && store.Read(ContextMenuPreview.OriginalMenuKey, "MultiSelectModel") == "Single"
+            && store.Read(ContextMenuPreview.OriginalMenuKey, "Icon") == @"C:\Program Files\Flip\Flip.exe,0"
+            && store.Read(commandKey, "") == "\"C:\\Program Files\\Flip\\Flip.exe\" --files \"%1\"";
+        ContextMenuPreview.Remove(store);
+        return kept
+            && store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+            && store.Read(commandKey, "") == "\"C:\\Program Files\\Flip\\Flip.exe\" --files \"%1\""
+            && !store.KeyExists(ContextMenuPreview.ParentKey)
+            && before.Contains("Converti con Flip", StringComparison.Ordinal);
+    }
+
+    static bool PreviewIdempotent(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = PreviewPlan(engines, exe);
+        var store = new MemoryRegistryStore();
+        ContextMenuPreview.Install(plan, store);
+        string once = store.Export();
+        ContextMenuPreview.Install(plan, store);
+        if (store.Export() != once || store.KeyCount != 8) return false;
+        store.DeleteKey(ContextMenuPreview.VerbKey("PDF") + @"\command");
+        store.DeleteKey(ContextMenuPreview.VerbKey("PDF"));
+        ContextMenuPreview.Install(plan, store);
+        if (store.Export() != once) return false;
+        ContextMenuPreview.Remove(store);
+        ContextMenuPreview.Remove(store);
+        if (store.KeyCount != 0) return false;
+        ContextMenuPreview.Install(plan, store);
+        return store.Export() == once;
+    }
+
+    static bool PreviewRemoveOwnedOnly(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = PreviewPlan(engines, exe);
+        var store = new MemoryRegistryStore();
+        ContextMenuPreview.Install(plan, store);
+        string sibling = @"Software\Classes\SystemFileAssociations\.png\shell\OtherTool";
+        store.Write(sibling, "MUIVerb", "Altro");
+        store.Write(sibling + @"\command", "", "notepad.exe \"%1\"");
+        store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+        store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+        string foreign = ContextMenuPreview.ParentKey + @"\shell\custom";
+        store.Write(foreign, "MUIVerb", "Esterno");
+        string decoy = Path.Combine(Path.GetTempPath(), "flip-m3-decoy-" + Guid.NewGuid().ToString("N") + ".ico");
+        File.WriteAllBytes(decoy, [1, 2, 3]);
+        try
+        {
+            ContextMenuPreview.Remove(store);
+            bool ownedGone = ContextMenuPreview.Formats.All(format =>
+                !store.KeyExists(ContextMenuPreview.VerbKey(format))
+                && !store.KeyExists(ContextMenuPreview.VerbKey(format) + @"\command"));
+            bool kept = store.Read(sibling, "MUIVerb") == "Altro"
+                && store.Read(sibling + @"\command", "") == "notepad.exe \"%1\""
+                && store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && store.Read(foreign, "MUIVerb") == "Esterno"
+                && store.KeyExists(ContextMenuPreview.ParentKey)
+                && store.KeyExists(ContextMenuPreview.ParentKey + @"\shell")
+                && File.ReadAllBytes(decoy).SequenceEqual(new byte[] { 1, 2, 3 });
+            var clean = new MemoryRegistryStore();
+            ContextMenuPreview.Install(plan, clean);
+            ContextMenuPreview.Remove(clean);
+            var alien = new MemoryRegistryStore();
+            alien.Write(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue, "Altro");
+            alien.Write(ContextMenuPreview.ParentKey, "MUIVerb", "Non toccare");
+            ContextMenuPreview.Remove(alien);
+            return ownedGone && kept && clean.KeyCount == 0 && alien.Read(ContextMenuPreview.ParentKey, "MUIVerb") == "Non toccare";
+        }
+        finally { try { File.Delete(decoy); } catch (IOException) { } }
+    }
+
+    static bool PreviewCollisionRefused(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = PreviewPlan(engines, exe);
+        var foreignParent = new MemoryRegistryStore();
+        foreignParent.Write(ContextMenuPreview.ParentKey, "", "Altro programma");
+        foreignParent.Write(ContextMenuPreview.ParentKey, "MUIVerb", "Non Flip");
+        if (!CollisionLeavesStore(plan, foreignParent)) return false;
+        var foreignCommand = new MemoryRegistryStore();
+        foreignCommand.Write(ContextMenuPreview.VerbKey("JPG") + @"\command", "", "notepad.exe \"%1\"");
+        if (!CollisionLeavesStore(plan, foreignCommand)) return false;
+        var owned = new MemoryRegistryStore();
+        ContextMenuPreview.Install(plan, owned);
+        owned.Write(ContextMenuPreview.VerbKey("WEBP") + @"\command", ContextMenuPreview.OwnerValue, "Altro");
+        owned.Write(ContextMenuPreview.VerbKey("WEBP") + @"\command", "", "cmd.exe /c echo estraneo");
+        return CollisionLeavesStore(plan, owned);
+    }
+
+    static bool CollisionLeavesStore(ContextMenuPlan plan, MemoryRegistryStore store)
+    {
+        string before = store.Export();
+        try { ContextMenuPreview.Install(plan, store); return false; }
+        catch (IOException) { return store.Export() == before; }
+    }
+
+    static bool PreviewDoesNotOpenWheel(string photo)
+    {
+        bool install = !Program.OpensWheelOnStartup(["--install-context-menu-preview"])
+            && !Program.OpensPanelOnStartup(["--install-context-menu-preview"])
+            && !Program.OpensWheelOnStartup(["--remove-context-menu-preview"])
+            && !Program.OpensPanelOnStartup(["--remove-context-menu-preview"])
+            && !Program.OpensWheelOnStartup(["--install-context-menu-preview", "--files", photo])
+            && !Program.OpensPanelOnStartup(["--remove-context-menu-preview", "--multi", "--files", photo]);
+        bool commands = ContextMenuPreview.Formats.All(format =>
+            !Program.OpensWheelOnStartup(["--convert-menu", format, "--files", photo])
+            && !Program.OpensPanelOnStartup(["--convert-menu", format, "--multi", "--files", photo]));
+        return install && commands
+            && Program.OpensWheelOnStartup(["--files", photo])
+            && !Program.OpensWheelOnStartup(["--install-context-menu"]);
     }
 
     sealed class MenuProbe : MenuConversion.IEndpoint

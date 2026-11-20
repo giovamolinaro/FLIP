@@ -23,5 +23,8 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="Flip.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-jpg-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-pdf-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-webp-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
