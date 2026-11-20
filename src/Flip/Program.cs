@@ -13,11 +13,13 @@ namespace Flip;
 internal static class Program
 {
     internal const string PipeName = "Flip.Local." + nameof(Flip) + "." + "v2";
+    internal const string DesktopMutexName = "Local\\Flip.Desktop.v2";
     [STAThread]
     static int Main(string[] args)
     {
         try
         {
+            if (args.Contains("--convert-menu")) return MenuConversion.Launch(args, new LiveMenuEndpoint());
             int evidence = Array.IndexOf(args, "--evidence"); if (evidence >= 0) Evidence.DirectoryPath = Path.GetFullPath(OptionValue(args, "--evidence"));
             if (evidence >= 0 || args.Contains("--preview-wheel") || args.Contains("--export-sound")) Directory.CreateDirectory(Evidence.DirectoryPath);
             if (args.Contains("--enable-startup") || args.Contains("--disable-startup")) { StartupIntegration.SetEnabled(args.Contains("--enable-startup")); return 0; }
@@ -41,18 +43,13 @@ internal static class Program
             if (args.Contains("--set-trigger"))
             {
                 var choice = WheelShortcut.Parse(OptionValue(args, "--set-trigger"));
-                using var check = new Mutex(false, "Local\\Flip.Desktop.v2", out bool absent);
+                using var check = new Mutex(false, DesktopMutexName, out bool absent);
                 if (!absent) { Send("trigger:" + choice.Id); return 0; }
                 var settings = AppPreferences.Load(); settings.Trigger = choice.Id; settings.Save(); return 0;
             }
-            using var mutex = new Mutex(true, "Local\\Flip.Desktop.v2", out bool fresh);
+            using var mutex = new Mutex(true, DesktopMutexName, out bool fresh);
             if (!fresh) { if (args.Contains("--background")) return 0; int p = Array.IndexOf(args, "--files"); Send(args.Contains("--settings") ? "settings" : p >= 0 ? (args.Contains("--multi") ? "multi:" : "") + JsonSerializer.Serialize(FileArguments(args)) : "select"); return 0; }
-            try
-            {
-                var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-                using var host = new Host(app, args); app.MainWindow = host; new WindowInteropHelper(host).EnsureHandle();
-                app.Run(); return 0;
-            }
+            try { return RunApplication(args); }
             finally { mutex.ReleaseMutex(); }
         }
         catch (Exception ex) { Evidence.Log("fatal", ex.ToString()); if (args.Contains("--convert") || args.Contains("--test-input") || args.Contains("--test-conversions")) { Console.Error.WriteLine(ex.Message); return 1; } MessageBox.Show(ex.Message, "Flip", MessageBoxButton.OK, MessageBoxImage.Error); return 1; }
@@ -76,6 +73,58 @@ internal static class Program
         try { using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.Out); pipe.Connect(1500); using var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true }; writer.WriteLine(message); }
         catch (TimeoutException) { if (message != "exit") MessageBox.Show("Flip è già in avvio. Attendi un istante e usa l'icona nell'area di notifica.", "Flip"); }
     }
+    internal static int RunApplication(string[] args)
+    {
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        using var host = new Host(app, args); app.MainWindow = host; new WindowInteropHelper(host).EnsureHandle();
+        app.Run(); return 0;
+    }
+    internal static bool OpensWheelOnStartup(string[] args)
+    {
+        if (args.Contains("--convert-menu") || args.Contains("--multi")) return false;
+        return Array.IndexOf(args, "--files") >= 0;
+    }
+    internal static bool OpensPanelOnStartup(string[] args)
+    {
+        if (args.Contains("--convert-menu")) return false;
+        return args.Contains("--multi") && Array.IndexOf(args, "--files") >= 0;
+    }
+    sealed class LiveMenuEndpoint : MenuConversion.IEndpoint
+    {
+        public ContextMenuCatalog.EngineSnapshot Engines => ContextMenuCatalog.EngineSnapshot.Detected;
+        public bool CompatibleHostRunning() => MenuConversion.CompatibleHostRunning();
+        public MenuConversion.Outcome Forward(MenuConversion.Request request) => MenuConversion.Forward(MenuConversion.MenuPipeName, request, 1500);
+        public bool TryBecomeHost(string[] args, out int exitCode)
+        {
+            exitCode = 1;
+            var mutex = new Mutex(true, DesktopMutexName, out bool fresh);
+            if (!fresh) { mutex.Dispose(); return false; }
+            try { exitCode = RunApplication(args); return true; }
+            finally { try { mutex.ReleaseMutex(); } catch (ApplicationException) { } mutex.Dispose(); }
+        }
+        public void Tell(string message)
+        {
+            Evidence.Log("menu.convert.notice", message);
+            MessageBox.Show(message, "Flip", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+}
+internal static class Ipc
+{
+    internal enum Kind { None, Exit, SoundTest, Settings, Trigger, Select, Multi, Files }
+    internal static Kind Classify(string? message)
+    {
+        if (message == null) return Kind.None;
+        if (message == "exit") return Kind.Exit;
+        if (message == "sound-test") return Kind.SoundTest;
+        if (message == "settings") return Kind.Settings;
+        if (message.StartsWith("trigger:", StringComparison.Ordinal)) return Kind.Trigger;
+        if (message == "select") return Kind.Select;
+        if (message.StartsWith("multi:", StringComparison.Ordinal)) return Kind.Multi;
+        return Kind.Files;
+    }
+    internal static string TriggerValue(string message) => message.Length > 8 ? message[8..] : "";
+    internal static string MultiValue(string message) => message.Length > 6 ? message[6..] : "";
 }
 internal sealed class Host : Window, IDisposable
 {
@@ -97,6 +146,7 @@ internal sealed class Host : Window, IDisposable
     WheelShortcut wheelShortcut = WheelShortcut.Parse(WheelShortcut.Default);
     string triggerName => wheelShortcut.Name;
     Task? work; CancellationTokenSource? job;
+    readonly MenuConversion.HeldMutex menuOwnership = MenuConversion.HoldCompatibilityMutex();
     string? lastFolder;
     internal Host(Application app, string[] args)
     {
@@ -180,11 +230,13 @@ internal sealed class Host : Window, IDisposable
         RegisterRaw();
         Evidence.Log("host.start", new { pid = Environment.ProcessId, buttonsSwapped = Native.ButtonsSwapped, wheelShortcut.Name, DocumentTools.Pandoc, DocumentTools.Office, MediaTools.Ffmpeg });
         _ = Listen();
+        _ = MenuConversion.ServeAsync(MenuConversion.MenuPipeName, HandleMenuRequest, lifetime.Token, null, message => Evidence.Log("menu.ipc.error", message));
         if (args.Contains("--measure-idle")) MeasureIdle();
         Dispatcher.BeginInvoke(() =>
         {
-            int p = Array.IndexOf(args, "--files");
-            if (p >= 0) { if (args.Contains("--multi")) ShowPanel(Program.FileArguments(args)); else Open(Program.FileArguments(args), false); }
+            if (args.Contains("--convert-menu")) { _ = RunMenuFromArgs(); return; }
+            if (Program.OpensPanelOnStartup(args)) ShowPanel(Program.FileArguments(args));
+            else if (Program.OpensWheelOnStartup(args)) Open(Program.FileArguments(args), false);
             else if (args.Contains("--settings")) ShowSettings();
             else if (args.Contains("--ui")) ShowPanel([]);
             else if (!args.Contains("--background")) Toast("Flip è pronto. Trascina un file e premi " + triggerName + ". Per più uscite usa il menu dell'icona.");
@@ -234,13 +286,62 @@ internal sealed class Host : Window, IDisposable
                 using var pipe = new NamedPipeServerStream(Program.PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await pipe.WaitForConnectionAsync(lifetime.Token);
                 using var reader = new StreamReader(pipe, Encoding.UTF8); string? message = await reader.ReadLineAsync(lifetime.Token);
-                await Dispatcher.InvokeAsync(() => { if (message == "exit") Exit(); else if (message == "sound-test") sound.Play(); else if (message == "settings") ShowSettings(); else if (message?.StartsWith("trigger:") == true) ApplyShortcut(message[8..]); else if (message == "select") ShowPanel([]); else if (message?.StartsWith("multi:") == true) ShowPanel(JsonSerializer.Deserialize<string[]>(message[6..]) ?? []); else if (message != null) Open(JsonSerializer.Deserialize<string[]>(message) ?? [], false); });
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    switch (Ipc.Classify(message))
+                    {
+                        case Ipc.Kind.Exit: Exit(); break;
+                        case Ipc.Kind.SoundTest: sound.Play(); break;
+                        case Ipc.Kind.Settings: ShowSettings(); break;
+                        case Ipc.Kind.Trigger: ApplyShortcut(Ipc.TriggerValue(message!)); break;
+                        case Ipc.Kind.Select: ShowPanel([]); break;
+                        case Ipc.Kind.Multi: ShowPanel(JsonSerializer.Deserialize<string[]>(Ipc.MultiValue(message!)) ?? []); break;
+                        case Ipc.Kind.Files: Open(JsonSerializer.Deserialize<string[]>(message!) ?? [], false); break;
+                    }
+                });
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex) { Evidence.Log("ipc.error", ex.Message); if (!lifetime.IsCancellationRequested) await Task.Delay(300, lifetime.Token); }
         }
     }
     internal void CancelJob() => job?.Cancel();
+    async Task RunMenuFromArgs()
+    {
+        try
+        {
+            if (!MenuConversion.TryParse(args, out var request, out var error)) { Toast(error); return; }
+            await RunMenu(request);
+        }
+        catch (Exception ex) { Toast(ex.Message); }
+    }
+    async Task<MenuConversion.Outcome> RunMenu(MenuConversion.Request request)
+    {
+        return await MenuConversion.RunExclusive(() => busy, value => busy = value, () => job, value => job = value, request, ConvertOne, Notify, onCompleted: outcome =>
+        {
+            if (outcome.Succeeded && !string.IsNullOrWhiteSpace(outcome.Folder)) lastFolder = outcome.Folder;
+        });
+    }
+    Task<MenuConversion.Outcome> HandleMenuRequest(MenuConversion.Request request, CancellationToken token)
+    {
+        _ = token;
+        var operation = Dispatcher.InvokeAsync(() => RunMenu(request));
+        return operation.Task.Unwrap();
+    }
+    async Task<ConversionResult> ConvertOne(string path, string format, CancellationToken token)
+    {
+        var results = await Task.Run(() => ConversionEngine.Convert(new[] { path }, new[] { format }, token, null, null), token).ConfigureAwait(false);
+        return results.Count == 1 ? results[0] : new ConversionResult(path, format, Array.Empty<string>(), "Conversione non riuscita.");
+    }
+    void Notify(string message)
+    {
+        try
+        {
+            if (Dispatcher.CheckAccess()) Toast(message);
+            else Dispatcher.Invoke(() => Toast(message));
+        }
+        catch (OperationCanceledException) { }
+        catch (InvalidOperationException) { }
+    }
     void SavePreferences() { try { preferences.Save(); } catch (Exception ex) { Toast("Impossibile salvare le preferenze: " + ex.Message); } }
     void QuickSelect()
     {
@@ -407,6 +508,6 @@ internal sealed class Host : Window, IDisposable
     {
         if (disposed) return; disposed = true; lifetime.Cancel(); job?.Cancel(); release.Stop(); watchdog.Stop(); RemoveRaw();
         source?.RemoveHook(Messages);
-        settingsWindow?.Close(); wheel?.Close(); panel?.Close(); sound.Dispose(); tray.Visible = false; tray.Dispose(); lifetime.Dispose(); Evidence.Log("host.stop");
+        settingsWindow?.Close(); wheel?.Close(); panel?.Close(); sound.Dispose(); tray.Visible = false; tray.Dispose(); menuOwnership.Dispose(); lifetime.Dispose(); Evidence.Log("host.stop");
     }
 }

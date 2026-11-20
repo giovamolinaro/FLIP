@@ -181,8 +181,391 @@ internal static class InputTests
         try { ConversionEngine.DeleteJob(cleanupRoot, Path.GetDirectoryName(cleanupRoot)!); checks["unowned_cleanup_refused"] = false; }
         catch (IOException) { checks["unowned_cleanup_refused"] = Directory.Exists(cleanupRoot); }
         Directory.Delete(cleanupRoot);
+        AddMenuConversionChecks(checks);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
         return checks.All(c => c.Value) ? 0 : 1;
+    }
+
+    static void AddMenuConversionChecks(Dictionary<string, bool> checks)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "flip-m2-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string priorLog = Evidence.DirectoryPath;
+        Evidence.DirectoryPath = Path.Combine(root, "logs");
+        try
+        {
+            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+            string photo = Path.Combine(root, "foto.png");
+            File.WriteAllBytes(photo, png);
+            var engines = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+            Check(checks, "menu_png_to_jpg", () => PngToJpg(photo, png, engines));
+            Check(checks, "menu_format_unavailable", () => FormatUnavailable(root, photo, engines));
+            Check(checks, "menu_missing_file", () => MissingFile(root, engines));
+            Check(checks, "menu_network_or_relative_rejected", () => DisallowedPaths(engines));
+            Check(checks, "menu_incompatible_or_incomplete", () => IncompatibleOptions(photo));
+            Check(checks, "menu_busy_rejected", () => BusyBlocks(photo, engines));
+            Check(checks, "menu_engine_error", () => EngineError(photo, png, engines));
+            Check(checks, "menu_cancelled", () => CancelKeepsOriginal(photo, png, engines));
+            Check(checks, "menu_original_not_replaced", () => RejectsOriginalAsOutput(photo, png));
+            Check(checks, "menu_startup_does_not_open_wheel", () => StartupSkipsWheel(photo));
+            Check(checks, "menu_legacy_ipc_unchanged", () => LegacyIpc(photo));
+            Check(checks, "menu_old_instance_not_contacted", () => OldInstanceNotContacted(photo, engines));
+            Check(checks, "menu_forward_failure_not_success", () => ForwardFailureNotSuccess(photo, engines));
+            Check(checks, "menu_payload_revalidated", () => PayloadRevalidated(photo, engines));
+            Check(checks, "menu_false_success_rejected", () => FalseSuccessRejected());
+            Check(checks, "menu_ipc_connect_failure", () => ConnectFailure(photo));
+            Check(checks, "menu_compatible_mutex_detected", () => MutexProbe());
+            checks["menu_ipc_success_waits_for_engine"] = false;
+            checks["menu_ipc_busy_rejected"] = false;
+            try { Task.Run(() => IpcRoundtrip(checks, photo, engines)).GetAwaiter().GetResult(); }
+            catch (Exception ex) { Console.Error.WriteLine("menu_ipc: " + ex); }
+        }
+        finally
+        {
+            Evidence.DirectoryPath = priorLog;
+            try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
+
+    static void Check(Dictionary<string, bool> checks, string name, Func<bool> test)
+    {
+        try { checks[name] = test(); }
+        catch (Exception ex) { Console.Error.WriteLine(name + ": " + ex); checks[name] = false; }
+    }
+
+    static bool PngToJpg(string photo, byte[] original, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string kept = Path.Combine(Path.GetDirectoryName(photo)!, "foto.converted.jpg");
+        File.WriteAllBytes(kept, new byte[] { 9, 9, 9, 9 });
+        bool busy = false;
+        CancellationTokenSource? job = null;
+        var notes = new List<string>();
+        int enteredAt = -1;
+        var task = Task.Run(() => MenuConversion.RunExclusive(() => busy, value => busy = value, () => job, value => job = value,
+            new MenuConversion.Request("jpg", photo),
+            async (path, format, token) =>
+            {
+                enteredAt = notes.Count;
+                var results = await ConversionEngine.Convert(new[] { path }, new[] { format }, token);
+                return results[0];
+            },
+            notes.Add, engines));
+        if (!task.Wait(TimeSpan.FromSeconds(20))) throw new TimeoutException("Conversione PNG scaduta.");
+        var outcome = task.Result;
+        if (!outcome.Succeeded) throw new InvalidOperationException(outcome.Message);
+        string produced = outcome.Output!;
+        return enteredAt == 1
+            && notes[0] == MenuConversion.StartedMessage("JPG")
+            && notes[^1] == outcome.Message
+            && outcome.Message.Contains(Path.GetFileName(produced), StringComparison.OrdinalIgnoreCase)
+            && outcome.Message.Contains(Path.GetDirectoryName(produced)!, StringComparison.Ordinal)
+            && File.Exists(produced)
+            && new FileInfo(produced).Length > 0
+            && !string.Equals(Path.GetFullPath(produced), Path.GetFullPath(photo), StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(Path.GetFullPath(produced), Path.GetFullPath(kept), StringComparison.OrdinalIgnoreCase)
+            && File.ReadAllBytes(photo).SequenceEqual(original)
+            && File.ReadAllBytes(kept).SequenceEqual(new byte[] { 9, 9, 9, 9 })
+            && !busy && job == null;
+    }
+
+    static bool FormatUnavailable(string root, string photo, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string mp3 = Path.Combine(root, "audio.mp3");
+        File.WriteAllBytes(mp3, new byte[] { 1, 2, 3 });
+        string jpg = Path.Combine(root, "gia.jpg");
+        File.WriteAllBytes(jpg, new byte[] { 4, 5 });
+        bool wav = MenuConversion.TryPrepare(new MenuConversion.Request("WAV", mp3), engines, out _, out string wavError);
+        bool docx = MenuConversion.TryPrepare(new MenuConversion.Request("DOCX", photo), engines, out _, out string docxError);
+        bool same = MenuConversion.TryPrepare(new MenuConversion.Request("JPG", jpg), engines, out _, out string sameError);
+        return !wav && wavError.Contains("non disponibile", StringComparison.Ordinal)
+            && !docx && docxError.Contains("DOCX", StringComparison.Ordinal)
+            && !same && sameError.Contains("non disponibile", StringComparison.Ordinal);
+    }
+
+    static bool MissingFile(string root, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string missing = Path.Combine(root, "assente.png");
+        bool prepared = MenuConversion.TryPrepare(new MenuConversion.Request("JPG", missing), engines, out _, out string error);
+        return !prepared && error.Contains("non trovato", StringComparison.Ordinal);
+    }
+
+    static bool DisallowedPaths(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        bool network = MenuConversion.TryPrepare(new MenuConversion.Request("JPG", @"\\flip-m2\share\foto.png"), engines, out _, out string networkError);
+        bool relative = MenuConversion.TryPrepare(new MenuConversion.Request("JPG", "foto.png"), engines, out _, out string relativeError);
+        return !network && networkError.Contains("non ammesso", StringComparison.Ordinal)
+            && !relative && relativeError.Contains("non ammesso", StringComparison.Ordinal);
+    }
+
+    static bool IncompatibleOptions(string photo)
+    {
+        string[] flags = ["--multi", "--convert", "--ui", "--settings", "--background", "--stop", "--preview-sound", "--set-trigger", "--trigger", "--test-input", "--install-context-menu", "--measure-idle", "--report", "--foo"];
+        bool rejected = flags.All(flag => !MenuConversion.TryParse(["--convert-menu", "JPG", "--files", photo, flag], out _, out string error) && error.Contains(flag, StringComparison.Ordinal));
+        bool twoFiles = !MenuConversion.TryParse(["--convert-menu", "JPG", "--files", photo, Path.Combine(Path.GetDirectoryName(photo)!, "altro.png")], out _, out string filesError)
+            && filesError.Contains("un solo file", StringComparison.Ordinal);
+        bool twoFormats = !MenuConversion.TryParse(["--convert-menu", "JPG,PDF", "--files", photo], out _, out string formatError)
+            && formatError.Contains("un solo formato", StringComparison.Ordinal);
+        bool missingFormat = !MenuConversion.TryParse(["--convert-menu", "--files", photo], out _, out _);
+        bool missingFile = !MenuConversion.TryParse(["--convert-menu", "JPG"], out _, out _);
+        bool valid = MenuConversion.TryParse(["--convert-menu", "JPG", "--files", photo], out var forward, out _)
+            && MenuConversion.TryParse(["--files", photo, "--convert-menu", "jpg"], out var backward, out _)
+            && forward.Format == "JPG" && backward.Format == "jpg" && forward.File == photo && backward.File == photo;
+        return rejected && twoFiles && twoFormats && missingFormat && missingFile && valid;
+    }
+
+    static bool BusyBlocks(string photo, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        int calls = 0;
+        var notes = new List<string>();
+        var outcome = MenuConversion.RunExclusive(() => true, _ => { }, () => null, _ => { },
+            new MenuConversion.Request("JPG", photo),
+            (_, _, _) => { calls++; return Task.FromResult(new ConversionResult(photo, "JPG", [], "non deve partire")); },
+            notes.Add, engines).GetAwaiter().GetResult();
+        return calls == 0 && outcome.Status == MenuConversion.Status.Busy && outcome.Message == MenuConversion.BusyMessage && !outcome.Succeeded && notes.Count == 1;
+    }
+
+    static bool EngineError(string photo, byte[] original, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        var notes = new List<string>();
+        var outcome = Task.Run(() => MenuConversion.RunExclusive(() => false, _ => { }, () => null, _ => { },
+            new MenuConversion.Request("JPG", photo),
+            (_, _, _) => Task.FromResult(new ConversionResult(photo, "JPG", Array.Empty<string>(), "Encoder non disponibile.")),
+            notes.Add, engines)).GetAwaiter().GetResult();
+        return !outcome.Succeeded
+            && outcome.Status == MenuConversion.Status.Error
+            && outcome.Message.Contains("Encoder non disponibile", StringComparison.Ordinal)
+            && notes[0] == MenuConversion.StartedMessage("JPG")
+            && notes[^1] == outcome.Message
+            && !notes.Exists(note => note.StartsWith("Creato ", StringComparison.Ordinal))
+            && File.ReadAllBytes(photo).SequenceEqual(original);
+    }
+
+    static bool CancelKeepsOriginal(string photo, byte[] original, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        bool busy = false;
+        CancellationTokenSource? job = null;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var notes = new List<string>();
+        var task = Task.Run(() => MenuConversion.RunExclusive(() => busy, value => busy = value, () => job, value => job = value,
+            new MenuConversion.Request("JPG", photo),
+            async (_, _, token) =>
+            {
+                entered.TrySetResult(true);
+                await Task.Delay(Timeout.Infinite, token);
+                return new ConversionResult(photo, "JPG", Array.Empty<string>(), "non completata");
+            },
+            notes.Add, engines));
+        if (!entered.Task.Wait(TimeSpan.FromSeconds(3))) throw new TimeoutException("Annullamento non avviato.");
+        CancellationTokenSource? cts = job ?? throw new InvalidOperationException("Manca il token di annullamento.");
+        cts.Cancel();
+        if (!task.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Annullamento non concluso.");
+        var outcome = task.Result;
+        return outcome.Status == MenuConversion.Status.Cancelled
+            && outcome.Message == MenuConversion.CancelledMessage
+            && !outcome.Succeeded
+            && notes[0] == MenuConversion.StartedMessage("JPG")
+            && notes[^1] == MenuConversion.CancelledMessage
+            && File.ReadAllBytes(photo).SequenceEqual(original)
+            && !busy;
+    }
+
+    static bool RejectsOriginalAsOutput(string photo, byte[] original)
+    {
+        var outcome = MenuConversion.FromResult(photo, new ConversionResult(photo, "JPG", new[] { photo }, null));
+        return outcome.Status == MenuConversion.Status.Error && !outcome.Succeeded && File.ReadAllBytes(photo).SequenceEqual(original);
+    }
+
+    static bool StartupSkipsWheel(string photo)
+    {
+        string[] menu = ["--convert-menu", "JPG", "--files", photo];
+        return !Program.OpensWheelOnStartup(menu)
+            && !Program.OpensPanelOnStartup(menu)
+            && Program.OpensWheelOnStartup(["--files", photo])
+            && !Program.OpensWheelOnStartup(["--files", photo, "--multi"])
+            && Program.OpensPanelOnStartup(["--multi", "--files", photo])
+            && !Program.OpensWheelOnStartup(["--background"])
+            && !Program.OpensPanelOnStartup(["--settings"])
+            && !Program.OpensWheelOnStartup(["--files", photo, "--convert-menu"])
+            && !Program.OpensPanelOnStartup(["--files", photo, "--multi", "--convert-menu"]);
+    }
+
+    static bool LegacyIpc(string photo)
+    {
+        string wire = MenuConversion.Serialize(new MenuConversion.Request("JPG", photo));
+        return Ipc.Classify("exit") == Ipc.Kind.Exit
+            && Ipc.Classify("sound-test") == Ipc.Kind.SoundTest
+            && Ipc.Classify("settings") == Ipc.Kind.Settings
+            && Ipc.Classify("trigger:DOWN") == Ipc.Kind.Trigger
+            && Ipc.TriggerValue("trigger:DOWN") == "DOWN"
+            && Ipc.Classify("select") == Ipc.Kind.Select
+            && Ipc.Classify("multi:[\"a.png\"]") == Ipc.Kind.Multi
+            && Ipc.MultiValue("multi:[\"a.png\"]") == "[\"a.png\"]"
+            && Ipc.Classify("[\"a.png\"]") == Ipc.Kind.Files
+            && Ipc.Classify(null) == Ipc.Kind.None
+            && Ipc.Classify(wire) == Ipc.Kind.Files
+            && MenuConversion.MenuPipeName != Program.PipeName
+            && MenuConversion.MenuPipeName.EndsWith(".menu", StringComparison.Ordinal)
+            && Program.FileArguments(["--files", "one.png", "two.png", "--convert-menu"]).SequenceEqual(new[] { "one.png", "two.png" })
+            && Program.OptionValue(["--set-trigger", "DOWN"], "--set-trigger") == "DOWN";
+    }
+
+    static bool OldInstanceNotContacted(string photo, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        var probe = new MenuProbe { Compatible = false, OwnedByOther = true, Engines = engines };
+        int code = MenuConversion.Launch(["--convert-menu", "JPG", "--files", photo], probe);
+        return code == 1 && probe.Forwards == 0 && probe.Hosts == 0 && probe.Tells == 1 && probe.Told == MenuConversion.OldInstanceMessage;
+    }
+
+    static bool ForwardFailureNotSuccess(string photo, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        var failed = new MenuProbe
+        {
+            Compatible = true,
+            Engines = engines,
+            ForwardOutcome = new MenuConversion.Outcome(MenuConversion.Status.ForwardFailed, MenuConversion.ForwardFailedMessage, null, null)
+        };
+        int failedCode = MenuConversion.Launch(["--convert-menu", "JPG", "--files", photo], failed);
+        var thrown = new MenuProbe { Compatible = true, Engines = engines, ForwardError = new IOException("pipe chiusa") };
+        int thrownCode = MenuConversion.Launch(["--convert-menu", "JPG", "--files", photo], thrown);
+        var engine = new MenuProbe
+        {
+            Compatible = true,
+            Engines = engines,
+            ForwardOutcome = new MenuConversion.Outcome(MenuConversion.Status.Error, "Encoder non disponibile.", null, null)
+        };
+        int engineCode = MenuConversion.Launch(["--convert-menu", "JPG", "--files", photo], engine);
+        var started = new MenuProbe { Compatible = false, OwnedByOther = false, Engines = engines };
+        int startedCode = MenuConversion.Launch(["--convert-menu", "JPG", "--files", photo], started);
+        var success = new MenuProbe
+        {
+            Compatible = true,
+            Engines = engines,
+            ForwardOutcome = new MenuConversion.Outcome(MenuConversion.Status.Success, "Creato out.jpg in C:\\temp.", @"C:\temp\out.jpg", @"C:\temp")
+        };
+        int successCode = MenuConversion.Launch(["--convert-menu", "JPG", "--files", photo], success);
+        return failedCode == 1 && failed.Forwards == 1 && failed.Hosts == 0 && failed.Tells == 1
+            && thrownCode == 1 && thrown.Forwards == 1 && thrown.Hosts == 0 && thrown.Tells == 1 && thrown.Told == MenuConversion.ForwardFailedMessage
+            && engineCode == 1 && engine.Tells == 0 && engine.Hosts == 0 && engine.Forwards == 1
+            && startedCode == 0 && started.Hosts == 1 && started.Forwards == 0 && started.Tells == 0
+            && successCode == 0 && success.Tells == 0 && success.Hosts == 0 && success.Forwards == 1;
+    }
+
+    static bool PayloadRevalidated(string photo, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string json = "{\"V\":1,\"Format\":\"DOCX\",\"File\":\"" + photo.Replace("\\", "\\\\") + "\"}";
+        if (!MenuConversion.TryDeserialize(json, out var request, out _)) return false;
+        int calls = 0;
+        var outcome = Task.Run(() => MenuConversion.Execute(request, (_, _, _) =>
+        {
+            calls++;
+            return Task.FromResult(new ConversionResult(photo, "DOCX", Array.Empty<string>(), null));
+        }, _ => { }, CancellationToken.None, engines)).GetAwaiter().GetResult();
+        bool badVersion = !MenuConversion.TryDeserialize("{\"V\":2,\"Format\":\"JPG\",\"File\":\"" + photo.Replace("\\", "\\\\") + "\"}", out _, out _);
+        return badVersion && calls == 0 && !outcome.Succeeded && outcome.Message.Contains("non disponibile", StringComparison.Ordinal);
+    }
+
+    static bool FalseSuccessRejected()
+    {
+        var missing = MenuConversion.ParseReply("{\"V\":1,\"Status\":\"success\",\"Message\":\"Creato finto.jpg\",\"Output\":\"C:\\\\no\\\\finto.jpg\",\"Folder\":\"C:\\\\no\"}");
+        var unknown = MenuConversion.ParseReply("{\"V\":1,\"Status\":\"ok\",\"Message\":\"fatto\",\"Output\":null,\"Folder\":null}");
+        return missing.Status == MenuConversion.Status.Error && !missing.Succeeded
+            && unknown.Status == MenuConversion.Status.ForwardFailed && !unknown.Succeeded;
+    }
+
+    static bool ConnectFailure(string photo)
+    {
+        var outcome = MenuConversion.Forward("Flip.MenuTest.Missing." + Guid.NewGuid().ToString("N"), new MenuConversion.Request("JPG", photo), 400);
+        return outcome.Status == MenuConversion.Status.ForwardFailed && !outcome.Succeeded && outcome.Message == MenuConversion.ForwardFailedMessage;
+    }
+
+    static bool MutexProbe()
+    {
+        string name = "Local\\Flip.MenuConvert.Test." + Guid.NewGuid().ToString("N");
+        using var held = new MenuConversion.HeldMutex(name);
+        bool visible = Task.Run(() => MenuConversion.MutexHeldByOther(name)).GetAwaiter().GetResult();
+        held.Dispose();
+        bool free = Task.Run(() => MenuConversion.MutexHeldByOther(name)).GetAwaiter().GetResult();
+        return visible && !free;
+    }
+
+    static async Task IpcRoundtrip(Dictionary<string, bool> checks, string photo, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string pipe = "Flip.MenuTest." + Guid.NewGuid().ToString("N");
+        string output = Path.Combine(Path.GetDirectoryName(photo)!, "ipc-out.jpg");
+        var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stop = new CancellationTokenSource();
+        bool busy = false;
+        CancellationTokenSource? job = null;
+        int calls = 0;
+        var sync = new SemaphoreSlim(1, 1);
+        var request = new MenuConversion.Request("JPG", photo);
+        Task serve = MenuConversion.ServeAsync(pipe, async (incoming, token) =>
+        {
+            await sync.WaitAsync(token).ConfigureAwait(false);
+            Task<MenuConversion.Outcome> work;
+            try
+            {
+                work = MenuConversion.RunExclusive(() => busy, value => busy = value, () => job, value => job = value, incoming,
+                    async (path, format, jobToken) =>
+                    {
+                        calls++;
+                        entered.TrySetResult(true);
+                        await release.Task.WaitAsync(jobToken).ConfigureAwait(false);
+                        await File.WriteAllBytesAsync(output, new byte[] { 1, 2, 3, 4 }, jobToken).ConfigureAwait(false);
+                        return new ConversionResult(path, format, new[] { output }, null);
+                    }, _ => { }, engines);
+            }
+            finally { sync.Release(); }
+            return await work.ConfigureAwait(false);
+        }, stop.Token, ready);
+        if (!await ready.Task.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false)) throw new TimeoutException("Server non pronto.");
+        var client = Task.Run(() => MenuConversion.Forward(pipe, request, 3000));
+        if (!await entered.Task.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false)) throw new TimeoutException("Motore non raggiunto.");
+        if (client.IsCompleted) throw new InvalidOperationException("L'inoltro è terminato prima del motore.");
+        MenuConversion.Outcome second = MenuConversion.Forward(pipe, request, 3000);
+        if (second.Status == MenuConversion.Status.ForwardFailed)
+        {
+            await Task.Delay(200).ConfigureAwait(false);
+            second = MenuConversion.Forward(pipe, request, 3000);
+        }
+        checks["menu_ipc_busy_rejected"] = second.Status == MenuConversion.Status.Busy && !second.Succeeded && calls == 1 && !client.IsCompleted;
+        release.TrySetResult(true);
+        var outcome = await client.ConfigureAwait(false);
+        checks["menu_ipc_success_waits_for_engine"] = outcome.Succeeded
+            && outcome.Message.Contains(Path.GetFileName(output), StringComparison.OrdinalIgnoreCase)
+            && outcome.Message.Contains(Path.GetDirectoryName(output)!, StringComparison.Ordinal)
+            && calls == 1
+            && File.Exists(output);
+        stop.Cancel();
+        try { await serve.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch (OperationCanceledException) { }
+    }
+
+    sealed class MenuProbe : MenuConversion.IEndpoint
+    {
+        internal bool Compatible;
+        internal bool OwnedByOther;
+        internal MenuConversion.Outcome ForwardOutcome = new(MenuConversion.Status.Error, "non impostato", null, null);
+        internal Exception? ForwardError;
+        internal int Forwards, Hosts, Tells;
+        internal string? Told;
+        public ContextMenuCatalog.EngineSnapshot Engines { get; set; } = new(false, false, false);
+        public bool CompatibleHostRunning() => Compatible;
+        public MenuConversion.Outcome Forward(MenuConversion.Request request)
+        {
+            Forwards++;
+            if (ForwardError != null) throw ForwardError;
+            return ForwardOutcome;
+        }
+        public bool TryBecomeHost(string[] args, out int exitCode)
+        {
+            exitCode = OwnedByOther ? 1 : 0;
+            if (OwnedByOther) return false;
+            Hosts++;
+            return true;
+        }
+        public void Tell(string message) { Tells++; Told = message; }
     }
 }
