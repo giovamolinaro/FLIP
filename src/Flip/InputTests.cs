@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security;
 using System.Text.Json;
 namespace Flip;
 
@@ -6,6 +7,8 @@ internal static class InputTests
 {
     internal static int Run()
     {
+        if (Environment.GetCommandLineArgs().Any(arg => arg.Equals("--image-matrix-only", StringComparison.Ordinal)))
+            return ImageMatrixTests.Run();
         var shortcut = WheelShortcut.Parse("OEM102");
         var checks = new Dictionary<string, bool>
         {
@@ -768,7 +771,7 @@ internal static class InputTests
         string exe = @"C:\Programmi Flip\Flip.exe";
         string photo = @"C:\My Photos\foto.png";
         string stable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Flip", "Flip.exe");
-        Check(checks, "next_png_three_formats_catalog", () => NextFormats(native, exe));
+        Check(checks, "next_png_six_formats_catalog", () => NextFormats(native, exe));
         Check(checks, "next_parent_without_anteprima", () => NextParentLabel(native, exe));
         Check(checks, "next_quotes_paths_with_spaces", () => NextQuotes(native, exe, photo));
         Check(checks, "next_icons_premium_v2", () => NextIcons(native, exe));
@@ -782,6 +785,28 @@ internal static class InputTests
         Check(checks, "next_backup_restore_reversible", () => NextBackupRestore(native, exe));
         Check(checks, "next_does_not_open_wheel", () => NextDoesNotOpenWheel(photo));
         Check(checks, "next_preview_plan_unchanged", () => NextLeavesPreviewPlan(native, exe));
+        Check(checks, "next_cli_png_linked", () => NextCliLinked(photo));
+        Check(checks, "next_cli_rejects_unapproved_paths", () => NextCliRejectsPaths(native));
+        Check(checks, "next_image_blueprints_match_policy", () => NextImageBlueprints(native));
+        Check(checks, "next_image_menu_keys_do_not_collide", () => NextImageMenusDoNotCollide(native, exe));
+        Check(checks, "next_missing_icons_block_registration", () => NextMissingIconsBlockRegistration(native));
+        Check(checks, "next_png_memory_install_and_remove", () => NextPngMemoryInstallAndRemove());
+        Check(checks, "next_registration_restores_after_error", () => NextRegistrationRestores(native, exe));
+        Check(checks, "next_image_eight_extensions_six_targets", () => NextImageEightExtensions(native));
+        Check(checks, "next_image_equivalent_extensions", () => NextEquivalentExtensions(native, exe));
+        Check(checks, "next_image_memory_install_remove_idempotent", () => NextImageMemoryLifecycle(native));
+        Check(checks, "next_image_foreign_owner_refused", () => NextImageForeignOwnerRefused(native));
+        Check(checks, "next_image_missing_and_corrupt_icons", () => NextImageIconsRefused(native));
+        Check(checks, "next_image_restore_after_write_error", () => NextImageWriteErrorRestores(native));
+        Check(checks, "next_image_remove_error_rolls_back", () => NextImageRemoveErrorRollsBack(native));
+        Check(checks, "next_image_remove_restore_is_not_atomic", () => NextImageRemoveRestoreIsNotAtomic(native));
+        Check(checks, "next_image_leaves_original_and_preview", () => NextImageLeavesForeignMenus(native));
+        Check(checks, "next_image_cli_installs_and_removes", () => NextImageCliInstallsAndRemoves(native));
+        Check(checks, "next_image_cli_rejects_conflicts", () => NextImageCliRejectsConflicts(photo));
+        Check(checks, "next_image_cli_rejects_paths_and_icons", () => NextImageCliRejectsPathsAndIcons(native));
+        Check(checks, "next_image_rollback_access_and_security", () => NextImageRollbackAccessAndSecurity(native));
+        Check(checks, "next_image_remove_without_icons", () => NextImageRemoveWithoutIcons(native));
+        Check(checks, "next_image_m4_window_unchanged", () => NextImageUsesMenuProgress(native, exe));
     }
 
     static ContextMenuPlan NextPlan(ContextMenuCatalog.EngineSnapshot engines, string exe) =>
@@ -789,18 +814,20 @@ internal static class InputTests
 
     static bool NextFormats(ContextMenuCatalog.EngineSnapshot engines, string exe)
     {
-        var offered = ContextMenuCatalog.ForExtension(".png", engines).Select(entry => entry.TargetFormat).ToHashSet(StringComparer.Ordinal);
+        var catalogFormats = ContextMenuCatalog.ForExtension(".png", engines).Select(entry => entry.TargetFormat).ToArray();
         var plan = NextPlan(engines, exe);
-        bool catalog = plan.Formats.Count == 3
-            && new[] { "JPG", "PDF", "WEBP" }.All(offered.Contains)
-            && plan.Formats.All(format => offered.Contains(format));
+        bool catalog = plan.Formats.SequenceEqual(catalogFormats)
+            && plan.Formats.Count == 6
+            && !plan.Formats.Contains("PNG")
+            && new[] { "JPG", "PDF", "WEBP", "BMP", "TIFF", "GIF" }.All(plan.Formats.Contains);
         bool titles = plan.Formats.All(format =>
             ContextMenuCatalog.ForExtension(".png", engines).Any(entry => entry.TargetFormat == format && entry.Title == plan.VerbTitle(format)));
         bool shape = plan.Formats.SequenceEqual(ContextMenuNext.Formats)
             && plan.Value(ContextMenuNext.ParentKey, ContextMenuNext.OwnerValue) == ContextMenuNext.MenuId
             && !plan.Keys.Contains(ContextMenuNext.ParentKey + @"\command")
+            && plan.Values.All(value => !(value.Key.Equals(ContextMenuNext.ParentKey, StringComparison.OrdinalIgnoreCase) && value.Name.Length == 0))
             && plan.Keys.All(key => key.StartsWith(ContextMenuNext.ParentKey, StringComparison.OrdinalIgnoreCase));
-        return catalog && titles && shape && plan.Keys.Count == 8;
+        return catalog && titles && shape && plan.Keys.Count == 2 + plan.Formats.Count * 2;
     }
 
     static bool NextParentLabel(ContextMenuCatalog.EngineSnapshot engines, string exe)
@@ -836,12 +863,19 @@ internal static class InputTests
     static bool NextIcons(ContextMenuCatalog.EngineSnapshot engines, string exe)
     {
         var plan = NextPlan(engines, exe);
-        return ContextMenuNext.Formats.All(format =>
+        bool premium = new[] { "JPG", "PDF", "WEBP", "PNG", "BMP", "TIFF", "GIF" }.All(format =>
+        {
+            string name = ContextMenuNext.IconFileName(format);
+            string path = Path.Combine(AppContext.BaseDirectory, name);
+            return File.Exists(path) && ContextMenuPreview.IconIsValid(path);
+        });
+        bool menu = ContextMenuNext.Formats.All(format =>
         {
             string icon = plan.Icon(format);
             return icon.EndsWith(ContextMenuPreview.IconFileName(format), StringComparison.OrdinalIgnoreCase)
                 && ContextMenuPreview.IconIsValid(Path.Combine(AppContext.BaseDirectory, ContextMenuPreview.IconFileName(format)));
         });
+        return premium && menu;
     }
 
     static bool NextRejectsBinObj(ContextMenuCatalog.EngineSnapshot engines)
@@ -862,12 +896,16 @@ internal static class InputTests
         var labPlan = ContextMenuNext.CreatePlan(lab, engines);
         return ContextMenuNext.IsStableInstallPath(stable)
             && ContextMenuNext.IsLaboratoryPath(lab)
-            && stablePlan.Keys.Count == 8
-            && labPlan.Keys.Count == 8;
+            && stablePlan.Formats.Count == 6
+            && stablePlan.Keys.Count == 2 + stablePlan.Formats.Count * 2
+            && labPlan.Keys.Count == stablePlan.Keys.Count;
     }
 
-    static bool NextSimulatedPath(ContextMenuCatalog.EngineSnapshot engines, string exe) =>
-        NextPlan(engines, exe).Keys.Count == 8;
+    static bool NextSimulatedPath(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        return plan.Formats.Count == 6 && plan.Keys.Count == 2 + plan.Formats.Count * 2;
+    }
 
     static bool NextForeignMenusUntouched(ContextMenuCatalog.EngineSnapshot engines, string exe)
     {
@@ -897,7 +935,7 @@ internal static class InputTests
         bool disjoint = !next.Keys.Any(key => preview.Keys.Contains(key, StringComparer.OrdinalIgnoreCase));
         bool ids = ContextMenuNext.MenuId != ContextMenuPreview.PrototypeId
             && next.Value(ContextMenuNext.ParentKey, "MUIVerb") != preview.Value(ContextMenuPreview.ParentKey, "MUIVerb");
-        return disjoint && ids && next.Keys.Count == preview.Keys.Count;
+        return disjoint && ids && next.Formats.Count == 6 && next.Keys.Count == 14 && preview.Keys.Count == 8;
     }
 
     static bool NextIdempotent(ContextMenuCatalog.EngineSnapshot engines, string exe)
@@ -907,7 +945,7 @@ internal static class InputTests
         ContextMenuNext.Install(plan, store);
         string once = store.Export();
         ContextMenuNext.Install(plan, store);
-        return store.Export() == once && store.KeyCount == 8;
+        return store.Export() == once && store.KeyCount == plan.Keys.Count;
     }
 
     static bool NextCollisionRefused(ContextMenuCatalog.EngineSnapshot engines, string exe)
@@ -950,6 +988,903 @@ internal static class InputTests
         string previewBefore = Snapshot(PreviewPlan(engines, exe));
         NextPlan(engines, exe);
         return Snapshot(PreviewPlan(engines, exe)) == previewBefore;
+    }
+
+    static bool NextCliLinked(string photo)
+    {
+        bool commands = ContextMenuNext.IsPlannedCommand(new[] { "--install-context-menu-png" })
+            && ContextMenuNext.IsPlannedCommand(new[] { "--remove-context-menu-png" })
+            && !ContextMenuNext.IsPlannedCommand(new[] { "--install-context-menu" })
+            && !ContextMenuNext.IsPlannedCommand(new[] { "--remove-context-menu" })
+            && !ContextMenuNext.IsPlannedCommand(new[] { "--install-context-menu-preview" })
+            && !ContextMenuNext.IsPlannedCommand(new[] { "--remove-context-menu-preview" })
+            && !ContextMenuNext.IsPlannedCommand(new[] { "--install-context-menu-images" })
+            && !ContextMenuNext.IsPlannedCommand(new[] { "--remove-context-menu-images" })
+            && !ContextMenuPreview.IsPreviewCommand(new[] { "--install-context-menu-png" });
+        bool wheel = !Program.OpensWheelOnStartup(new[] { "--install-context-menu-png" })
+            && !Program.OpensPanelOnStartup(new[] { "--install-context-menu-png" })
+            && !Program.OpensWheelOnStartup(new[] { "--remove-context-menu-png" })
+            && !Program.OpensPanelOnStartup(new[] { "--remove-context-menu-png" })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu-png", "--files", photo })
+            && !Program.OpensPanelOnStartup(new[] { "--remove-context-menu-png", "--multi", "--files", photo })
+            && Program.OpensWheelOnStartup(new[] { "--files", photo })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu" })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu-preview" });
+        return commands && wheel;
+    }
+
+    static bool NextCliRejectsPaths(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string[] rejected =
+        {
+            @"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe",
+            @"C:\dev\FLIP\src\Flip\obj\Release\net10.0-windows\Flip.exe",
+            Path.Combine(Path.GetTempPath(), "Flip.exe")
+        };
+        foreach (string path in rejected)
+        {
+            var store = new TouchRegistry();
+            bool installRejected = false;
+            bool removeRejected = false;
+            try { ContextMenuNext.Apply(false, path, store); }
+            catch (IOException) { installRejected = true; }
+            try { ContextMenuNext.Apply(true, path, store); }
+            catch (IOException) { removeRejected = true; }
+            if (!installRejected || !removeRejected || store.Calls != 0) return false;
+        }
+        string stable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Flip", "Flip.exe");
+        string lab = Path.Combine(Path.GetTempPath(), "Flip-Lab", "Flip.exe");
+        return ContextMenuNext.CreatePlan(stable, engines).Formats.SequenceEqual(ContextMenuNext.Formats)
+            && ContextMenuNext.CreatePlan(lab, engines).Formats.SequenceEqual(ContextMenuNext.Formats);
+    }
+
+    static bool NextImageBlueprints(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string[] expected = { ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif" };
+        if (!ContextMenuNext.ImageExtensions.SequenceEqual(expected) || !Policy.Images.SequenceEqual(expected)) return false;
+        var banned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [".png"] = "PNG", [".jpg"] = "JPG", [".jpeg"] = "JPG", [".webp"] = "WEBP",
+            [".bmp"] = "BMP", [".tif"] = "TIFF", [".tiff"] = "TIFF", [".gif"] = "GIF"
+        };
+        var plans = ContextMenuNext.PlanImageMenus(engines);
+        if (plans.Length != expected.Length || !plans.Select(plan => plan.Extension).SequenceEqual(expected)) return false;
+        bool textRejected = false;
+        try { ContextMenuNext.MenuIdFor(".txt"); }
+        catch (IOException) { textRejected = true; }
+        if (!textRejected || ContextMenuNext.ParentVerb != "Converti con Flip" || ContextMenuNext.ParentVerb.Contains("Anteprima", StringComparison.Ordinal)) return false;
+        var iconNames = new[] { "JPG", "PDF", "WEBP", "PNG", "BMP", "TIFF", "GIF" }.Select(ContextMenuNext.IconFileName).ToArray();
+        if (iconNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != iconNames.Length) return false;
+        if (ContextMenuNext.IconFileName("JPG") != ContextMenuPreview.IconFileName("JPG")
+            || ContextMenuNext.IconFileName("PDF") != ContextMenuPreview.IconFileName("PDF")
+            || ContextMenuNext.IconFileName("WEBP") != ContextMenuPreview.IconFileName("WEBP")) return false;
+        if (ContextMenuNext.IconFileName("PNG") != "flip-menu-png-premium-v2.ico"
+            || ContextMenuNext.IconFileName("BMP") != "flip-menu-bmp-premium-v2.ico"
+            || ContextMenuNext.IconFileName("TIFF") != "flip-menu-tiff-premium-v2.ico"
+            || ContextMenuNext.IconFileName("GIF") != "flip-menu-gif-premium-v2.ico") return false;
+        foreach (var plan in plans)
+        {
+            string[] policy = Wheel.OrderFormats(Policy.Outputs(new[] { "flip.context" + plan.Extension }, engines.Pandoc, engines.Office, engines.Ffmpeg));
+            string[] catalog = ContextMenuCatalog.ForExtension(plan.Extension, engines).Select(entry => entry.TargetFormat).ToArray();
+            if (!plan.Formats.SequenceEqual(policy) || !plan.Formats.SequenceEqual(catalog) || plan.Formats.Count != 6) return false;
+            if (plan.Formats.Contains(banned[plan.Extension], StringComparer.Ordinal)) return false;
+            if (plan.Entries.Select(entry => entry.Title).SequenceEqual(plan.Formats.Select(format => "Converti in " + format)) == false) return false;
+            if (plan.MenuId != ContextMenuNext.MenuIdFor(plan.Extension)) return false;
+            if (plan.ParentKey != ContextMenuNext.ParentKeyFor(plan.Extension)) return false;
+            if (plan.SubCommandsPath != ContextMenuNext.SubCommandsPathFor(plan.Extension)) return false;
+        }
+        var png = plans.Single(plan => plan.Extension == ".png");
+        return png.MenuId == ContextMenuNext.MenuId
+            && png.ParentKey == ContextMenuNext.ParentKey
+            && png.SubCommandsPath == ContextMenuNext.SubCommandsPath
+            && png.Formats.SequenceEqual(ContextMenuNext.Formats)
+            && png.Formats.Contains("BMP")
+            && png.Formats.Contains("TIFF")
+            && png.Formats.Contains("GIF")
+            && !png.Formats.Contains("PNG");
+    }
+
+    static bool NextImageMenusDoNotCollide(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plans = ContextMenuNext.PlanImageMenus(engines);
+        var roots = plans.Select(plan => plan.ParentKey).ToArray();
+        if (roots.Distinct(StringComparer.OrdinalIgnoreCase).Count() != roots.Length) return false;
+        if (plans.Select(plan => plan.MenuId).Distinct(StringComparer.Ordinal).Count() != 6) return false;
+        if (plans.Single(plan => plan.Extension == ".jpg").MenuId != plans.Single(plan => plan.Extension == ".jpeg").MenuId) return false;
+        if (plans.Single(plan => plan.Extension == ".tif").MenuId != plans.Single(plan => plan.Extension == ".tiff").MenuId) return false;
+        var cli = NextPlan(engines, exe);
+        var pngKeys = ContextMenuNext.PlannedKeys(plans.Single(plan => plan.Extension == ".png")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (cli.Keys.Count != pngKeys.Count || !cli.Keys.All(pngKeys.Contains) || cli.Keys.Contains(ContextMenuNext.ParentKey + @"\command")) return false;
+        for (int i = 0; i < plans.Length; i++)
+        {
+            var keys = ContextMenuNext.PlannedKeys(plans[i]);
+            if (keys.Contains(plans[i].ParentKey + @"\command")) return false;
+            if (keys.Any(key => key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith(ContextMenuPreview.OriginalMenuKey + @"\", StringComparison.OrdinalIgnoreCase)
+                || key.Equals(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith(ContextMenuPreview.ParentKey + @"\", StringComparison.OrdinalIgnoreCase)
+                || key.Contains(@"\CLSID", StringComparison.OrdinalIgnoreCase)
+                || key.Contains("UserChoice", StringComparison.OrdinalIgnoreCase)
+                || key.Equals(@"Software\Classes\" + plans[i].Extension, StringComparison.OrdinalIgnoreCase))) return false;
+            if (!keys.All(key => key.StartsWith(@"Software\Classes\SystemFileAssociations\", StringComparison.OrdinalIgnoreCase))) return false;
+            for (int j = 0; j < plans.Length; j++)
+            {
+                if (i == j) continue;
+                var other = ContextMenuNext.PlannedKeys(plans[j]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (keys.Any(other.Contains)) return false;
+                if (plans[j].ParentKey.StartsWith(plans[i].ParentKey + @"\", StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            if (plans[i].Extension != ".png" && keys.Any(key => cli.Keys.Contains(key, StringComparer.OrdinalIgnoreCase))) return false;
+        }
+        bool destinationIcons = new[] { "jpg", "pdf", "webp", "bmp", "tiff", "gif" }.All(format =>
+            cli.Values.Any(value => value.Name.Equals("Icon", StringComparison.OrdinalIgnoreCase)
+                && value.Data.Contains("flip-menu-" + format + "-premium-v2.ico", StringComparison.OrdinalIgnoreCase)));
+        bool sourceIconAbsent = !cli.Values.Any(value => value.Name.Equals("Icon", StringComparison.OrdinalIgnoreCase)
+            && value.Data.Contains("flip-menu-png-premium", StringComparison.OrdinalIgnoreCase));
+        return cli.Value(ContextMenuNext.ParentKey, "NeverDefault") == "" && destinationIcons && sourceIconAbsent;
+    }
+
+    static bool NextMissingIconsBlockRegistration(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string[] allIconFormats = ["JPG", "PDF", "WEBP", "PNG", "BMP", "TIFF", "GIF"];
+        string directory = Path.Combine(Path.GetTempPath(), "Flip-Lab", "icons-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var fingerprints = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (string format in allIconFormats)
+            {
+                string name = ContextMenuNext.IconFileName(format);
+                string source = Path.Combine(AppContext.BaseDirectory, name);
+                if (!File.Exists(source) || !ContextMenuPreview.IconIsValid(source)) return false;
+                fingerprints[source] = IconFingerprint(source);
+                File.Copy(source, Path.Combine(directory, name));
+            }
+            string exe = Path.Combine(directory, "Flip.exe");
+            var plans = ContextMenuNext.PlanImageMenus(engines);
+            foreach (var plan in plans)
+            {
+                var memory = new MemoryRegistryStore();
+                ContextMenuNext.RegisterImageMenu(plan, exe, memory);
+                if (!memory.KeyExists(plan.ParentKey) || memory.KeyCount == 0) return false;
+            }
+            var pngStore = new MemoryRegistryStore();
+            ContextMenuNext.Apply(false, exe, pngStore);
+            if (!pngStore.KeyExists(ContextMenuNext.ParentKey)) return false;
+
+            string missingDir = Path.Combine(Path.GetTempPath(), "Flip-Lab", "missing-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(missingDir);
+            try
+            {
+                foreach (string format in new[] { "JPG", "PDF", "WEBP", "PNG", "BMP", "TIFF" })
+                {
+                    string name = ContextMenuNext.IconFileName(format);
+                    File.Copy(Path.Combine(AppContext.BaseDirectory, name), Path.Combine(missingDir, name));
+                }
+                string missingExe = Path.Combine(missingDir, "Flip.exe");
+                var untouched = new TouchRegistry();
+                bool refused = false;
+                try { ContextMenuNext.RegisterImageMenu(plans[0], missingExe, untouched); }
+                catch (IOException) { refused = true; }
+                if (!refused || untouched.Calls != 0) return false;
+                var missingMemory = new MemoryRegistryStore();
+                try { ContextMenuNext.RegisterImageMenu(plans[0], missingExe, missingMemory); }
+                catch (IOException) { }
+                if (missingMemory.KeyCount != 0) return false;
+                string empty = Path.Combine(Path.GetTempPath(), "Flip-Lab", "empty-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(empty);
+                try
+                {
+                    var emptyBlocked = new TouchRegistry();
+                    bool emptyRefused = false;
+                    try { ContextMenuNext.Apply(false, Path.Combine(empty, "Flip.exe"), emptyBlocked); }
+                    catch (IOException) { emptyRefused = true; }
+                    if (!emptyRefused || emptyBlocked.Calls != 0) return false;
+                }
+                finally { try { Directory.Delete(empty, true); } catch (IOException) { } }
+            }
+            finally { try { Directory.Delete(missingDir, true); } catch (IOException) { } }
+
+            string invalidDir = Path.Combine(Path.GetTempPath(), "Flip-Lab", "invalid-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(invalidDir);
+            try
+            {
+                foreach (string format in allIconFormats)
+                {
+                    string name = ContextMenuNext.IconFileName(format);
+                    string dest = Path.Combine(invalidDir, name);
+                    if (format == "BMP")
+                        File.WriteAllBytes(dest, [1, 2, 3, 4]);
+                    else
+                        File.Copy(Path.Combine(AppContext.BaseDirectory, name), dest);
+                }
+                string invalidExe = Path.Combine(invalidDir, "Flip.exe");
+                var invalidMemory = new MemoryRegistryStore();
+                bool invalidRefused = false;
+                try { ContextMenuNext.RegisterImageMenu(plans.Single(plan => plan.Extension == ".png"), invalidExe, invalidMemory); }
+                catch (IOException) { invalidRefused = true; }
+                if (!invalidRefused || invalidMemory.KeyCount != 0) return false;
+            }
+            finally { try { Directory.Delete(invalidDir, true); } catch (IOException) { } }
+
+            foreach (var pair in fingerprints)
+                if (IconFingerprint(pair.Key) != pair.Value) return false;
+            return true;
+        }
+        finally { try { if (Directory.Exists(directory)) Directory.Delete(directory, true); } catch (IOException) { } }
+    }
+
+    static bool NextPngMemoryInstallAndRemove()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "Flip-Lab", "menu-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            foreach (string format in ContextMenuNext.Formats)
+            {
+                string name = ContextMenuPreview.IconFileName(format);
+                string source = Path.Combine(AppContext.BaseDirectory, name);
+                if (!ContextMenuPreview.IconIsValid(source)) return false;
+                File.Copy(source, Path.Combine(directory, name));
+            }
+            string exe = Path.Combine(directory, "Flip.exe");
+            var store = new MemoryRegistryStore();
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+            store.Write(ContextMenuPreview.ParentKey, "MUIVerb", ContextMenuPreview.ParentVerb);
+            store.Write(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue, ContextMenuPreview.PrototypeId);
+            string jpg = ContextMenuNext.ParentKeyFor(".jpg");
+            store.Write(jpg, ContextMenuNext.OwnerValue, ContextMenuNext.MenuIdFor(".jpg"));
+            store.Write(jpg, "MUIVerb", "Converti con Flip");
+            string beforeForeign = store.Export();
+            ContextMenuNext.Apply(false, exe, store);
+            bool installed = store.KeyExists(ContextMenuNext.ParentKey)
+                && store.Read(ContextMenuNext.ParentKey, "MUIVerb") == "Converti con Flip"
+                && store.Read(ContextMenuNext.ParentKey, "NeverDefault") == ""
+                && store.Read(ContextMenuNext.ParentKey, ContextMenuNext.OwnerValue) == ContextMenuNext.MenuId
+                && !store.KeyExists(ContextMenuNext.ParentKey + @"\command")
+                && ContextMenuNext.Formats.All(format =>
+                {
+                    string command = store.Read(ContextMenuNext.VerbKey(format) + @"\command", "") ?? "";
+                    string icon = store.Read(ContextMenuNext.VerbKey(format), "Icon") ?? "";
+                    return command.Contains("--convert-menu " + format, StringComparison.Ordinal)
+                        && icon.EndsWith(ContextMenuPreview.IconFileName(format), StringComparison.OrdinalIgnoreCase);
+                });
+            bool foreignKept = store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && store.Read(ContextMenuPreview.OriginalMenuKey + @"\command", "") == "\"C:\\Flip\\Flip.exe\" --files \"%1\""
+                && store.Read(ContextMenuPreview.ParentKey, "MUIVerb") == ContextMenuPreview.ParentVerb
+                && store.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId
+                && store.Read(jpg, ContextMenuNext.OwnerValue) == ContextMenuNext.MenuIdFor(".jpg")
+                && store.Read(jpg, "MUIVerb") == "Converti con Flip";
+            ContextMenuNext.Apply(true, exe, store);
+            ContextMenuNext.Apply(true, exe, store);
+            bool removed = !store.KeyExists(ContextMenuNext.ParentKey)
+                && !store.KeyExists(ContextMenuNext.ParentKey + @"\shell")
+                && ContextMenuNext.Formats.All(format =>
+                    !store.KeyExists(ContextMenuNext.VerbKey(format))
+                    && !store.KeyExists(ContextMenuNext.VerbKey(format) + @"\command"))
+                && store.Export() == beforeForeign;
+            return installed && foreignKept && removed;
+        }
+        finally { try { if (Directory.Exists(directory)) Directory.Delete(directory, true); } catch (IOException) { } }
+    }
+
+    static bool NextRegistrationRestores(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var plan = NextPlan(engines, exe);
+        var empty = new FailAfterWriteStore { FailOn = 4 };
+        empty.Inner.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+        string before = empty.Inner.Export();
+        bool threw = false;
+        try { ContextMenuNext.Install(plan, empty); }
+        catch (IOException ex) { threw = ex.Message.Contains("errore simulato", StringComparison.Ordinal); }
+        bool clean = threw
+            && empty.Inner.Export() == before
+            && !empty.Inner.KeyExists(ContextMenuNext.ParentKey);
+        ContextMenuNext.Install(plan, empty);
+        bool repeated = empty.Inner.KeyExists(ContextMenuNext.ParentKey);
+        ContextMenuNext.Remove(empty);
+        bool removed = !empty.Inner.KeyExists(ContextMenuNext.ParentKey)
+            && empty.Inner.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip";
+        var ready = new MemoryRegistryStore();
+        ContextMenuNext.Install(plan, ready);
+        ready.Write(ContextMenuNext.ParentKey, "MUIVerb", "Personalizzato");
+        string jpg = ContextMenuNext.ParentKeyFor(".jpg");
+        ready.Write(jpg, ContextMenuNext.OwnerValue, ContextMenuNext.MenuIdFor(".jpg"));
+        string customized = ready.Export();
+        var interrupted = new FailAfterWriteStore(ready) { FailOn = 2 };
+        bool interruptedThrow = false;
+        try { ContextMenuNext.Install(plan, interrupted); }
+        catch (IOException ex) { interruptedThrow = ex.Message.Contains("errore simulato", StringComparison.Ordinal); }
+        return clean && repeated && removed && interruptedThrow && ready.Export() == customized;
+    }
+
+    static bool NextImageEightExtensions(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        var rich = new ContextMenuCatalog.EngineSnapshot(true, true, true);
+        var plans = ContextMenuNext.PlanImageMenus(engines);
+        var again = ContextMenuNext.PlanImageMenus(rich);
+        if (plans.Length != 8 || !plans.Select(plan => plan.Extension).SequenceEqual(Policy.Images)) return false;
+        for (int index = 0; index < plans.Length; index++)
+        {
+            var plan = plans[index];
+            string[] catalog = ContextMenuCatalog.ForExtension(plan.Extension, engines).Select(entry => entry.TargetFormat).ToArray();
+            string[] policy = Wheel.OrderFormats(Policy.Outputs(new[] { "flip.context" + plan.Extension }, engines.Pandoc, engines.Office, engines.Ffmpeg));
+            if (plan.Formats.Count != 6 || !plan.Formats.SequenceEqual(catalog) || !plan.Formats.SequenceEqual(policy)) return false;
+            if (!plan.Formats.SequenceEqual(again[index].Formats)) return false;
+            if (!plan.Entries.Select(entry => entry.Title).SequenceEqual(plan.Formats.Select(format => "Converti in " + format))) return false;
+            if (plan.Entries.Select(entry => entry.TargetFormat).Distinct(StringComparer.Ordinal).Count() != 6) return false;
+        }
+        var png = plans.Single(plan => plan.Extension == ".png");
+        return png.Formats.SequenceEqual(new[] { "PDF", "JPG", "WEBP", "BMP", "TIFF", "GIF" })
+            && plans.Single(plan => plan.Extension == ".jpg").Formats.SequenceEqual(new[] { "PDF", "PNG", "WEBP", "BMP", "TIFF", "GIF" })
+            && plans.Single(plan => plan.Extension == ".webp").Formats.SequenceEqual(new[] { "PDF", "JPG", "PNG", "BMP", "TIFF", "GIF" })
+            && plans.Single(plan => plan.Extension == ".bmp").Formats.SequenceEqual(new[] { "PDF", "JPG", "PNG", "WEBP", "TIFF", "GIF" })
+            && plans.Single(plan => plan.Extension == ".gif").Formats.SequenceEqual(new[] { "PDF", "JPG", "PNG", "WEBP", "BMP", "TIFF" });
+    }
+
+    static bool NextEquivalentExtensions(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        var blueprints = ContextMenuNext.PlanImageMenus(engines);
+        var plans = ContextMenuNext.CreateImagePlans(exe, engines);
+        ImageMenuBlueprint Of(string extension) => blueprints.Single(plan => plan.Extension == extension);
+        var jpg = Of(".jpg");
+        var jpeg = Of(".jpeg");
+        var tif = Of(".tif");
+        var tiff = Of(".tiff");
+        if (jpg.SharesCommandTree || tif.SharesCommandTree || !jpeg.SharesCommandTree || !tiff.SharesCommandTree) return false;
+        if (jpg.MenuId != "Flip.Convert.Jpg" || jpeg.MenuId != jpg.MenuId || jpeg.MenuId != ContextMenuNext.MenuIdFor(".jpeg")) return false;
+        if (tif.MenuId != "Flip.Convert.Tif" || tiff.MenuId != tif.MenuId) return false;
+        if (!jpg.Formats.SequenceEqual(jpeg.Formats) || !tif.Formats.SequenceEqual(tiff.Formats)) return false;
+        if (jpg.Formats.Contains("JPG") || jpeg.Formats.Contains("JPG") || jpg.Formats.Contains("JPEG") || tif.Formats.Contains("TIFF") || tif.Formats.Contains("TIF") || tiff.Formats.Contains("TIFF")) return false;
+        if (jpeg.SubCommandsPath != jpg.SubCommandsPath || tiff.SubCommandsPath != tif.SubCommandsPath) return false;
+        if (jpeg.CommandParentKey != jpg.ParentKey || tiff.CommandParentKey != tif.ParentKey) return false;
+        if (!jpeg.ParentKey.Contains(@"\.jpeg\shell\Flip.Convert.Jpg", StringComparison.Ordinal)) return false;
+        if (!tiff.ParentKey.Contains(@"\.tiff\shell\Flip.Convert.Tif", StringComparison.Ordinal)) return false;
+        var jpegKeys = ContextMenuNext.PlannedKeys(jpeg);
+        var tiffKeys = ContextMenuNext.PlannedKeys(tiff);
+        var jpgKeys = ContextMenuNext.PlannedKeys(jpg).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tifKeys = ContextMenuNext.PlannedKeys(tif).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (jpegKeys.Count != 1 || tiffKeys.Count != 1 || jpegKeys[0] != jpeg.ParentKey || tiffKeys[0] != tiff.ParentKey) return false;
+        if (jpegKeys.Any(jpgKeys.Contains) || tiffKeys.Any(tifKeys.Contains)) return false;
+        if (jpgKeys.Count != 14 || tifKeys.Count != 14) return false;
+        bool verbs = plans.SelectMany(plan => plan.Keys).All(key =>
+            !key.EndsWith(@"\jpeg", StringComparison.OrdinalIgnoreCase)
+            && !key.EndsWith(@"\tif", StringComparison.OrdinalIgnoreCase)
+            && !key.Contains(@"\shell\jpeg\", StringComparison.OrdinalIgnoreCase)
+            && !key.Contains(@"\shell\tif\", StringComparison.OrdinalIgnoreCase));
+        var jpegPlan = plans.Single(plan => plan.Keys.Count == 1 && plan.Keys[0] == jpeg.ParentKey);
+        bool pointer = jpegPlan.Value(jpeg.ParentKey, "ExtendedSubCommandsKey") == jpg.SubCommandsPath
+            && jpegPlan.Value(jpeg.ParentKey, "MUIVerb") == "Converti con Flip"
+            && !jpegPlan.Values.Any(value => value.Name.Length == 0 || value.Name.Equals("Icon", StringComparison.OrdinalIgnoreCase))
+            && !jpegPlan.Keys.Contains(jpeg.ParentKey + @"\command")
+            && !jpegPlan.Keys.Contains(jpeg.ParentKey + @"\shell");
+        bool commands = plans.Where(plan => plan.Keys.Count > 1).All(plan =>
+            plan.Formats.All(format => plan.Command(format) == "\"" + exe + "\" --convert-menu " + format + " --files \"%1\""));
+        return verbs && pointer && commands && jpg.Formats.Contains("PNG") && tif.Formats.Contains("GIF") && !tif.Formats.Contains("TIFF");
+    }
+
+    static bool NextImageMemoryLifecycle(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("menu");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            var blueprints = ContextMenuNext.PlanImageMenus(engines);
+            var plans = ContextMenuNext.CreateImagePlans(exe, engines);
+            var store = new MemoryRegistryStore();
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+            store.Write(ContextMenuPreview.ParentKey, "MUIVerb", ContextMenuPreview.ParentVerb);
+            store.Write(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue, ContextMenuPreview.PrototypeId);
+            string sibling = @"Software\Classes\SystemFileAssociations\.png\shell\OtherTool";
+            store.Write(sibling, "MUIVerb", "Altro");
+            int foreign = store.KeyCount;
+            ContextMenuNext.InstallImageMenus(exe, engines, store);
+            if (store.KeyCount != foreign + plans.Sum(plan => plan.Keys.Count)) return false;
+            foreach (var blueprint in blueprints)
+            {
+                if (store.Read(blueprint.ParentKey, "MUIVerb") != "Converti con Flip") return false;
+                if (store.Read(blueprint.ParentKey, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                if (store.Read(blueprint.ParentKey, "") != null) return false;
+                if (store.KeyExists(blueprint.ParentKey + @"\command")) return false;
+                if (blueprint.SharesCommandTree)
+                {
+                    if (store.KeyExists(blueprint.ParentKey + @"\shell")) return false;
+                    if (store.Read(blueprint.ParentKey, "ExtendedSubCommandsKey") != blueprint.SubCommandsPath) return false;
+                    continue;
+                }
+                foreach (string format in blueprint.Formats)
+                {
+                    string verb = blueprint.ParentKey + @"\shell\" + format.ToLowerInvariant();
+                    string command = store.Read(verb + @"\command", "") ?? "";
+                    string icon = store.Read(verb, "Icon") ?? "";
+                    if (command != "\"" + exe + "\" --convert-menu " + format + " --files \"%1\"") return false;
+                    if (!icon.EndsWith(ContextMenuNext.IconFileName(format), StringComparison.OrdinalIgnoreCase)) return false;
+                    if (!MenuConversion.TryParse(new[] { "--convert-menu", format, "--files", @"C:\My Photos\foto.png" }, out var request, out _)) return false;
+                    if (request.Format != format) return false;
+                }
+            }
+            string once = store.Export();
+            ContextMenuNext.InstallImageMenus(exe, engines, store);
+            if (store.Export() != once) return false;
+            string decoy = ContextMenuNext.ParentKey + @"\shell\custom";
+            store.Write(decoy, "MUIVerb", "Esterno");
+            store.Write(decoy, ContextMenuNext.OwnerValue, "Altro");
+            ContextMenuNext.RemoveImageMenus(store);
+            ContextMenuNext.RemoveImageMenus(store);
+            bool ownedGone = blueprints.Where(plan => plan.Extension != ".png").All(plan => !store.KeyExists(plan.ParentKey))
+                && !store.KeyExists(ContextMenuNext.VerbKey("PDF"))
+                && store.KeyExists(ContextMenuNext.ParentKey)
+                && store.KeyExists(decoy)
+                && store.Read(decoy, "MUIVerb") == "Esterno"
+                && store.Read(sibling, "MUIVerb") == "Altro"
+                && store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && store.Read(ContextMenuPreview.OriginalMenuKey + @"\command", "") == "\"C:\\Flip\\Flip.exe\" --files \"%1\""
+                && store.Read(ContextMenuPreview.ParentKey, "MUIVerb") == ContextMenuPreview.ParentVerb
+                && store.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId;
+            var clean = new MemoryRegistryStore();
+            ContextMenuNext.InstallImageMenus(exe, engines, clean);
+            int installed = clean.KeyCount;
+            ContextMenuNext.RemoveImageMenus(clean);
+            ContextMenuNext.RemoveImageMenus(clean);
+            return ownedGone && installed == plans.Sum(plan => plan.Keys.Count) && clean.KeyCount == 0;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool NextImageForeignOwnerRefused(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("foreign");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            var alias = new MemoryRegistryStore();
+            alias.Write(ContextMenuNext.ParentKeyFor(".jpeg"), ContextMenuNext.OwnerValue, "Altro");
+            alias.Write(ContextMenuNext.ParentKeyFor(".jpeg"), "MUIVerb", "Non toccare");
+            if (!ImageInstallLeavesStore(exe, engines, alias)) return false;
+            var command = new MemoryRegistryStore();
+            string verb = ContextMenuNext.ParentKeyFor(".bmp") + @"\shell\png\command";
+            command.Write(verb, "", "notepad.exe \"%1\"");
+            return ImageInstallLeavesStore(exe, engines, command);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ImageInstallLeavesStore(string exe, ContextMenuCatalog.EngineSnapshot engines, MemoryRegistryStore store)
+    {
+        string before = store.Export();
+        try { ContextMenuNext.InstallImageMenus(exe, engines, store); return false; }
+        catch (IOException) { return store.Export() == before; }
+    }
+
+    static bool NextImageIconsRefused(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string missing = ImageLab("missing");
+        string corrupt = ImageLab("corrupt");
+        try
+        {
+            if (!CopyPremiumIcons(missing, omit: "GIF")) return false;
+            if (!CopyPremiumIcons(corrupt, corrupt: "PNG")) return false;
+            var missingStore = new TouchRegistry();
+            bool missingRefused = false;
+            try { ContextMenuNext.InstallImageMenus(Path.Combine(missing, "Flip.exe"), engines, missingStore); }
+            catch (IOException) { missingRefused = true; }
+            var corruptStore = new TouchRegistry();
+            bool corruptRefused = false;
+            try { ContextMenuNext.InstallImageMenus(Path.Combine(corrupt, "Flip.exe"), engines, corruptStore); }
+            catch (IOException) { corruptRefused = true; }
+            var bin = new TouchRegistry();
+            bool binRefused = false;
+            try { ContextMenuNext.InstallImageMenus(@"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe", engines, bin); }
+            catch (IOException) { binRefused = true; }
+            return missingRefused && corruptRefused && binRefused
+                && missingStore.Calls == 0 && corruptStore.Calls == 0 && bin.Calls == 0;
+        }
+        finally
+        {
+            DeleteLab(missing);
+            DeleteLab(corrupt);
+        }
+    }
+
+    static bool NextImageWriteErrorRestores(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("write");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            var store = new FailAfterWriteStore { FailOn = 4 };
+            store.Inner.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            store.Inner.Write(ContextMenuPreview.ParentKey, "MUIVerb", ContextMenuPreview.ParentVerb);
+            string before = store.Inner.Export();
+            bool threw = false;
+            try { ContextMenuNext.InstallImageMenus(exe, engines, store); }
+            catch (IOException ex) { threw = ex.Message.Contains("errore simulato", StringComparison.Ordinal); }
+            return threw && store.Inner.Export() == before && !store.Inner.KeyExists(ContextMenuNext.ParentKey);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool NextImageRemoveErrorRollsBack(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("remove");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            var installed = new MemoryRegistryStore();
+            ContextMenuNext.InstallImageMenus(Path.Combine(directory, "Flip.exe"), engines, installed);
+            installed.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            string before = installed.Export();
+            var interrupted = new FailAfterDeleteStore(installed) { FailOn = 1 };
+            bool threw = false;
+            try { ContextMenuNext.RemoveImageMenus(interrupted); }
+            catch (IOException ex)
+            {
+                threw = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("non è atomica", StringComparison.Ordinal);
+            }
+            return threw && installed.Export() == before
+                && installed.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip";
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool NextImageRemoveRestoreIsNotAtomic(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("atomic");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            var installed = new MemoryRegistryStore();
+            ContextMenuNext.InstallImageMenus(Path.Combine(directory, "Flip.exe"), engines, installed);
+            installed.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            installed.Write(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue, ContextMenuPreview.PrototypeId);
+            var interrupted = new FailAfterDeleteStore(installed) { FailOn = 1, FailRestore = true };
+            bool threw = false;
+            try { ContextMenuNext.RemoveImageMenus(interrupted); }
+            catch (IOException ex)
+            {
+                threw = ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                    && ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && ex.Message.Contains("ripristino simulato", StringComparison.Ordinal)
+                    && ex.InnerException is IOException inner
+                    && inner.Message.Contains("errore simulato", StringComparison.Ordinal);
+            }
+            return threw
+                && installed.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && installed.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId
+                && installed.KeyExists(ContextMenuNext.ParentKey);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool NextImageLeavesForeignMenus(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("foreign-menus");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            string previewBefore = JsonSerializer.Serialize(PreviewPlan(engines, exe).Values.Select(value => new { value.Key, value.Name, value.Data }));
+            var plans = ContextMenuNext.CreateImagePlans(exe, engines);
+            if (plans.SelectMany(plan => plan.Keys).Any(key =>
+                key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith(ContextMenuPreview.OriginalMenuKey + @"\", StringComparison.OrdinalIgnoreCase)
+                || key.Equals(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith(ContextMenuPreview.ParentKey + @"\", StringComparison.OrdinalIgnoreCase)
+                || key.Contains(@"\CLSID", StringComparison.OrdinalIgnoreCase))) return false;
+            string previewAfter = JsonSerializer.Serialize(PreviewPlan(engines, exe).Values.Select(value => new { value.Key, value.Name, value.Data }));
+            var store = new MemoryRegistryStore();
+            ContextMenuPreview.Install(PreviewPlan(engines, exe), store);
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            string before = store.Export();
+            ContextMenuNext.InstallImageMenus(exe, engines, store);
+            ContextMenuNext.RemoveImageMenus(store);
+            return previewBefore == previewAfter && store.Export() == before;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static int RunImageCommand(string[] args, string exe, IRegistryStore store, ContextMenuCatalog.EngineSnapshot engines, out string error)
+    {
+        var buffer = new StringWriter();
+        int code = ContextMenuNext.ApplyImages(args, exe, store, engines, buffer);
+        error = buffer.ToString();
+        return code;
+    }
+
+    static bool NextImageCliInstallsAndRemoves(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("cli");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            var blueprints = ContextMenuNext.PlanImageMenus(engines);
+            var store = new MemoryRegistryStore();
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+            store.Write(ContextMenuPreview.ParentKey, "MUIVerb", ContextMenuPreview.ParentVerb);
+            store.Write(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue, ContextMenuPreview.PrototypeId);
+            string sibling = @"Software\Classes\SystemFileAssociations\.png\shell\OtherTool";
+            store.Write(sibling, "MUIVerb", "Altro");
+            string beforeForeign = store.Export();
+            int installed = RunImageCommand(new[] { "--install-context-menu-images" }, exe, store, engines, out string installError);
+            if (installed != 0 || installError.Length != 0) return false;
+            if (store.Export() == beforeForeign) return false;
+            foreach (var blueprint in blueprints)
+            {
+                if (store.Read(blueprint.ParentKey, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                if (store.Read(blueprint.ParentKey, "") != null) return false;
+                if (store.Read(blueprint.ParentKey, "NeverDefault") != "") return false;
+                if (store.KeyExists(blueprint.ParentKey + @"\command")) return false;
+            }
+            var jpeg = blueprints.Single(plan => plan.Extension == ".jpeg");
+            var jpg = blueprints.Single(plan => plan.Extension == ".jpg");
+            var tiff = blueprints.Single(plan => plan.Extension == ".tiff");
+            var tif = blueprints.Single(plan => plan.Extension == ".tif");
+            if (store.Read(jpeg.ParentKey, "ExtendedSubCommandsKey") != jpg.SubCommandsPath) return false;
+            if (store.Read(tiff.ParentKey, "ExtendedSubCommandsKey") != tif.SubCommandsPath) return false;
+            if (store.KeyExists(jpeg.ParentKey + @"\shell") || store.KeyExists(tiff.ParentKey + @"\command")) return false;
+            string once = store.Export();
+            int again = RunImageCommand(new[] { "--install-context-menu-images", "--install-context-menu-images" }, exe, store, engines, out string againError);
+            if (again != 0 || againError.Length != 0 || store.Export() != once) return false;
+            int removed = RunImageCommand(new[] { "--remove-context-menu-images" }, exe, store, engines, out string removeError);
+            int removedAgain = RunImageCommand(new[] { "--remove-context-menu-images" }, exe, store, engines, out string removeAgainError);
+            return removed == 0 && removeError.Length == 0
+                && removedAgain == 0 && removeAgainError.Length == 0
+                && store.Export() == beforeForeign
+                && store.Read(sibling, "MUIVerb") == "Altro"
+                && store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && store.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId
+                && !store.KeyExists(jpg.ParentKey)
+                && !store.KeyExists(jpeg.ParentKey);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool NextImageCliRejectsConflicts(string photo)
+    {
+        var engines = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        string[] extras =
+        {
+            "--install-context-menu-png", "--remove-context-menu-png",
+            "--install-context-menu-preview", "--remove-context-menu-preview",
+            "--install-context-menu", "--remove-context-menu",
+            "--convert-menu", "--convert", "--test-input", "--test-conversions",
+            "--files", "--multi", "--settings", "--background", "--stop",
+            "--enable-startup", "--disable-startup", "--preview-menu-progress",
+            "--preview-wheel", "--export-sound", "--ui", "--set-trigger", "foto.png"
+        };
+        var store = new TouchRegistry();
+        int both = RunImageCommand(
+            new[] { "--install-context-menu-images", "--remove-context-menu-images" },
+            @"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe",
+            store, engines, out string bothError);
+        if (both == 0 || store.Calls != 0 || !bothError.Contains("Nessuna modifica al Registro", StringComparison.Ordinal)) return false;
+        foreach (string extra in extras)
+        {
+            int install = RunImageCommand(new[] { "--install-context-menu-images", extra }, @"C:\Programmi Flip\Flip.exe", store, engines, out string installError);
+            int remove = RunImageCommand(new[] { extra, "--remove-context-menu-images" }, @"C:\Programmi Flip\Flip.exe", store, engines, out string removeError);
+            if (install == 0 || remove == 0 || store.Calls != 0) return false;
+            if (!installError.Contains(extra, StringComparison.Ordinal) || !installError.Contains("Nessuna modifica al Registro", StringComparison.Ordinal)) return false;
+            if (!removeError.Contains(extra, StringComparison.Ordinal) || removeError.Contains("garantito", StringComparison.OrdinalIgnoreCase)) return false;
+            if (Program.OpensWheelOnStartup(new[] { "--install-context-menu-images", extra, "--files", photo })) return false;
+            if (Program.OpensPanelOnStartup(new[] { "--remove-context-menu-images", "--multi", "--files", photo, extra })) return false;
+        }
+        return store.Calls == 0
+            && ContextMenuNext.IsPlannedCommand(new[] { "--install-context-menu-png" })
+            && ContextMenuPreview.IsPreviewCommand(new[] { "--install-context-menu-preview" })
+            && !ContextMenuNext.IsImageMenuCommand(new[] { "--install-context-menu-png" })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu-images" })
+            && !Program.OpensPanelOnStartup(new[] { "--remove-context-menu-images" })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu-images", "--files", photo })
+            && !Program.OpensPanelOnStartup(new[] { "--remove-context-menu-images", "--multi", "--files", photo })
+            && Program.OpensWheelOnStartup(new[] { "--files", photo })
+            && Program.OpensPanelOnStartup(new[] { "--multi", "--files", photo })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu" })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu-preview" })
+            && !Program.OpensWheelOnStartup(new[] { "--install-context-menu-png" });
+    }
+
+    static bool NextImageCliRejectsPathsAndIcons(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string[] rejected =
+        {
+            @"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe",
+            @"C:\dev\FLIP\src\Flip\obj\Release\net10.0-windows\Flip.exe",
+            Path.Combine(Path.GetTempPath(), "Flip.exe"),
+            @"C:\Programmi Flip\Flip.exe"
+        };
+        var store = new TouchRegistry();
+        foreach (string path in rejected)
+        {
+            int install = RunImageCommand(new[] { "--install-context-menu-images" }, path, store, engines, out string installError);
+            int remove = RunImageCommand(new[] { "--remove-context-menu-images" }, path, store, engines, out string removeError);
+            if (install == 0 || remove == 0 || store.Calls != 0) return false;
+            if (installError.Length == 0 || removeError.Length == 0) return false;
+            if (installError.Contains("garantito", StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        string missing = ImageLab("cli-missing");
+        string corrupt = ImageLab("cli-corrupt");
+        try
+        {
+            if (!CopyPremiumIcons(missing, omit: "TIFF")) return false;
+            if (!CopyPremiumIcons(corrupt, corrupt: "BMP")) return false;
+            int missingCode = RunImageCommand(new[] { "--install-context-menu-images" }, Path.Combine(missing, "Flip.exe"), store, engines, out string missingError);
+            int corruptCode = RunImageCommand(new[] { "--install-context-menu-images" }, Path.Combine(corrupt, "Flip.exe"), store, engines, out string corruptError);
+            return missingCode != 0 && corruptCode != 0 && store.Calls == 0
+                && missingError.Contains("Icone non disponibili", StringComparison.Ordinal)
+                && corruptError.Contains("Icone non disponibili", StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteLab(missing);
+            DeleteLab(corrupt);
+        }
+    }
+
+    static bool NextImageRollbackAccessAndSecurity(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("cli-rollback");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            Exception[] failures =
+            {
+                new UnauthorizedAccessException("errore simulato"),
+                new SecurityException("errore simulato"),
+                new InvalidOperationException("errore simulato"),
+                new ArgumentException("errore simulato")
+            };
+            foreach (var failure in failures)
+            {
+                var installStore = new MemoryRegistryStore();
+                installStore.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+                string beforeInstall = installStore.Export();
+                var installFail = new FailAfterWriteStore(installStore) { FailOn = 4, Failure = failure };
+                bool installThrew = false;
+                try { ContextMenuNext.InstallImageMenus(exe, engines, installFail); }
+                catch (Exception ex) when (ex.GetType() == failure.GetType())
+                {
+                    installThrew = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                        && !ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                        && !ex.Message.Contains("non è atomica", StringComparison.Ordinal);
+                }
+                if (!installThrew || installStore.Export() != beforeInstall) return false;
+                var commandStore = new FailAfterWriteStore { FailOn = 4, Failure = CopyFailure(failure) };
+                commandStore.Inner.Write(ContextMenuPreview.ParentKey, "MUIVerb", ContextMenuPreview.ParentVerb);
+                string beforeCommand = commandStore.Inner.Export();
+                int code = RunImageCommand(new[] { "--install-context-menu-images" }, exe, commandStore, engines, out string error);
+                if (code == 0 || commandStore.Inner.Export() != beforeCommand) return false;
+                if (!error.Contains("errore simulato", StringComparison.Ordinal) || error.Contains("potrebbe essere parziale", StringComparison.Ordinal)) return false;
+
+                var installed = new MemoryRegistryStore();
+                ContextMenuNext.InstallImageMenus(exe, engines, installed);
+                installed.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+                string beforeRemove = installed.Export();
+                var removeFail = new FailAfterDeleteStore(installed) { FailOn = 1, Failure = CopyFailure(failure) };
+                bool removeThrew = false;
+                try { ContextMenuNext.RemoveImageMenus(exe, removeFail); }
+                catch (Exception ex) when (ex.GetType() == failure.GetType())
+                {
+                    removeThrew = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                        && !ex.Message.Contains("non è atomica", StringComparison.Ordinal);
+                }
+                if (!removeThrew || installed.Export() != beforeRemove) return false;
+                if (installed.Read(ContextMenuPreview.OriginalMenuKey, "") != "Converti con Flip") return false;
+            }
+
+            var partial = new MemoryRegistryStore();
+            ContextMenuNext.InstallImageMenus(exe, engines, partial);
+            partial.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            var corruptRestore = new FailAfterDeleteStore(partial) { FailOn = 1, CorruptRestoreWrites = true };
+            bool partialSignaled = false;
+            try { ContextMenuNext.RemoveImageMenus(exe, corruptRestore); }
+            catch (IOException ex)
+            {
+                partialSignaled = ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                    && ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase)
+                    && ex.InnerException is IOException;
+            }
+            return partialSignaled
+                && partial.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && partial.Export().Contains("#parziale", StringComparison.Ordinal);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static Exception CopyFailure(Exception failure) => failure switch
+    {
+        UnauthorizedAccessException => new UnauthorizedAccessException(failure.Message),
+        SecurityException => new SecurityException(failure.Message),
+        InvalidOperationException => new InvalidOperationException(failure.Message),
+        ArgumentException => new ArgumentException(failure.Message),
+        _ => new IOException(failure.Message)
+    };
+
+    static bool NextImageRemoveWithoutIcons(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string directory = ImageLab("cli-no-icons");
+        try
+        {
+            if (!CopyPremiumIcons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            var store = new MemoryRegistryStore();
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            string sibling = @"Software\Classes\SystemFileAssociations\.webp\shell\OtherTool";
+            store.Write(sibling, "MUIVerb", "Altro");
+            if (RunImageCommand(new[] { "--install-context-menu-images" }, exe, store, engines, out _) != 0) return false;
+            foreach (string format in new[] { "GIF", "TIFF" })
+                File.Delete(Path.Combine(directory, ContextMenuNext.IconFileName(format)));
+            string before = store.Read(ContextMenuPreview.OriginalMenuKey, "") + "|" + store.Read(sibling, "MUIVerb");
+            int removed = RunImageCommand(new[] { "--remove-context-menu-images" }, exe, store, engines, out string error);
+            return removed == 0 && error.Length == 0
+                && !store.KeyExists(ContextMenuNext.ParentKey)
+                && !store.KeyExists(ContextMenuNext.ParentKeyFor(".jpg"))
+                && !store.KeyExists(ContextMenuNext.ParentKeyFor(".jpeg"))
+                && !store.KeyExists(ContextMenuNext.ParentKeyFor(".tif"))
+                && !store.KeyExists(ContextMenuNext.ParentKeyFor(".tiff"))
+                && store.Read(ContextMenuPreview.OriginalMenuKey, "") + "|" + store.Read(sibling, "MUIVerb") == before
+                && store.Read(sibling, "MUIVerb") == "Altro";
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool NextImageUsesMenuProgress(ContextMenuCatalog.EngineSnapshot engines, string exe)
+    {
+        if (!PreviewCopyUnchanged()) return false;
+        var plans = ContextMenuNext.CreateImagePlans(exe, engines);
+        return plans.SelectMany(plan => plan.Values).Where(value => value.Name.Length == 0).All(value =>
+            value.Key.EndsWith(@"\command", StringComparison.OrdinalIgnoreCase)
+            && value.Data.Contains("--convert-menu ", StringComparison.Ordinal)
+            && !value.Key.EndsWith(@"\shell\command", StringComparison.OrdinalIgnoreCase));
+    }
+
+    static string ImageLab(string name) =>
+        Path.Combine(Path.GetTempPath(), "Flip-Lab", name + "-" + Guid.NewGuid().ToString("N"));
+
+    static void DeleteLab(string directory)
+    {
+        try { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+        catch (IOException) { }
+    }
+
+    static bool CopyPremiumIcons(string directory, string? omit = null, string? corrupt = null)
+    {
+        Directory.CreateDirectory(directory);
+        foreach (string format in new[] { "JPG", "PDF", "WEBP", "PNG", "BMP", "TIFF", "GIF" })
+        {
+            string name = ContextMenuNext.IconFileName(format);
+            string dest = Path.Combine(directory, name);
+            if (omit != null && format.Equals(omit, StringComparison.Ordinal)) continue;
+            if (corrupt != null && format.Equals(corrupt, StringComparison.Ordinal))
+            {
+                File.WriteAllBytes(dest, [1, 2, 3, 4]);
+                continue;
+            }
+            string source = Path.Combine(AppContext.BaseDirectory, name);
+            if (!File.Exists(source) || !ContextMenuPreview.IconIsValid(source)) return false;
+            File.Copy(source, dest);
+        }
+        return true;
+    }
+
+    static int IconFingerprint(string path)
+    {
+        byte[] data = File.ReadAllBytes(path);
+        int hash = data.Length;
+        for (int index = 0; index < data.Length; index += 64)
+            hash = unchecked(hash * 31 + data[index]);
+        return hash;
     }
 
     static void AddMenuProgressChecks(Dictionary<string, bool> checks)
@@ -1240,6 +2175,83 @@ internal static class InputTests
             && MenuConversion.TryDeserialize(wire, out var request, out _)
             && request.Format == "JPG"
             && request.File == photo;
+    }
+
+    sealed class TouchRegistry : IRegistryStore
+    {
+        internal int Calls;
+        public bool KeyExists(string path) { Calls++; throw new InvalidOperationException("Registro non previsto."); }
+        public string? Read(string path, string name) { Calls++; throw new InvalidOperationException("Registro non previsto."); }
+        public IReadOnlyList<string> SubKeys(string path) { Calls++; throw new InvalidOperationException("Registro non previsto."); }
+        public void Write(string path, string name, string data) { Calls++; throw new InvalidOperationException("Registro non previsto."); }
+        public void DeleteKey(string path) { Calls++; throw new InvalidOperationException("Registro non previsto."); }
+    }
+
+    sealed class FailAfterWriteStore : IRegistryStore
+    {
+        readonly MemoryRegistryStore inner;
+        int writes;
+        bool tripped;
+        internal int FailOn { get; init; }
+        internal Exception? Failure { get; init; }
+        internal bool CorruptRestoreWrites { get; init; }
+        internal MemoryRegistryStore Inner => inner;
+        internal FailAfterWriteStore() : this(new MemoryRegistryStore()) { }
+        internal FailAfterWriteStore(MemoryRegistryStore inner) => this.inner = inner;
+        public bool KeyExists(string path) => inner.KeyExists(path);
+        public string? Read(string path, string name) => inner.Read(path, name);
+        public IReadOnlyList<string> SubKeys(string path) => inner.SubKeys(path);
+        public void DeleteKey(string path) => inner.DeleteKey(path);
+        public void Write(string path, string name, string data)
+        {
+            writes++;
+            if (!tripped && writes == FailOn)
+            {
+                tripped = true;
+                throw Failure ?? new IOException("errore simulato");
+            }
+            if (tripped && CorruptRestoreWrites)
+            {
+                inner.Write(path, name, data + "#parziale");
+                return;
+            }
+            inner.Write(path, name, data);
+        }
+    }
+
+    sealed class FailAfterDeleteStore : IRegistryStore
+    {
+        readonly MemoryRegistryStore inner;
+        int deletes;
+        bool tripped;
+        internal int FailOn { get; init; } = 1;
+        internal bool FailRestore { get; init; }
+        internal bool CorruptRestoreWrites { get; init; }
+        internal Exception? Failure { get; init; }
+        internal FailAfterDeleteStore(MemoryRegistryStore inner) => this.inner = inner;
+        public bool KeyExists(string path) => inner.KeyExists(path);
+        public string? Read(string path, string name) => inner.Read(path, name);
+        public IReadOnlyList<string> SubKeys(string path) => inner.SubKeys(path);
+        public void Write(string path, string name, string data)
+        {
+            if (tripped && FailRestore) throw new IOException("ripristino simulato");
+            if (tripped && CorruptRestoreWrites)
+            {
+                inner.Write(path, name, data + "#parziale");
+                return;
+            }
+            inner.Write(path, name, data);
+        }
+        public void DeleteKey(string path)
+        {
+            inner.DeleteKey(path);
+            deletes++;
+            if (!tripped && deletes == FailOn)
+            {
+                tripped = true;
+                throw Failure ?? new IOException("errore simulato");
+            }
+        }
     }
 
     sealed class MenuProbe : MenuConversion.IEndpoint
