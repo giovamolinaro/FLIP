@@ -14,6 +14,14 @@ namespace Flip;
 // --install-context-menu-images e --remove-context-menu-images passano da ApplyImages.
 // I test iniettano IRegistryStore. Il codice 0 vale solo se l'operazione richiesta è terminata.
 // --install-context-menu-png e --remove-context-menu-png restano il solo menu PNG, con le sei destinazioni.
+// Menu PDF, TXT e dati: stesso perimetro di backup, proprietario e percorsi dei menu immagini.
+// .yml punta a .yaml con ExtendedSubCommandsKey e non duplica i comandi.
+// Le destinazioni seguono lo snapshot dei motori. La rimozione usa l'insieme massimo (Pandoc)
+// e cancella solo le chiavi il cui FlipOwner è di FLIP.
+// HKCU non è transazionale: in caso di errore si tenta il ripristino e se ne controlla l'esito.
+// Il ripristino può fallire e lasciare il Registro parziale.
+// --install-context-menu-pdf-text-data e --remove-context-menu-pdf-text-data passano da ApplyContent.
+// Il metodo Install dei menu immagini continua a rifiutare queste chiavi.
 internal static class ContextMenuNext
 {
     internal const string MenuId = "Flip.Convert.Png";
@@ -24,11 +32,15 @@ internal static class ContextMenuNext
     internal const string LaboratorySegment = "Flip-Lab";
     internal const string InstallImagesCommand = "--install-context-menu-images";
     internal const string RemoveImagesCommand = "--remove-context-menu-images";
+    internal const string InstallContentCommand = "--install-context-menu-pdf-text-data";
+    internal const string RemoveContentCommand = "--remove-context-menu-pdf-text-data";
     internal static IReadOnlyList<string> Formats =>
         ContextMenuCatalog.ForExtension(".png", new ContextMenuCatalog.EngineSnapshot(false, false, false))
             .Select(entry => entry.TargetFormat)
             .ToArray();
     internal static IReadOnlyList<string> ImageExtensions => Policy.Images;
+    internal static IReadOnlyList<string> ContentExtensions { get; } =
+        [".pdf", ".txt", ".json", ".yaml", ".yml", ".xml", ".csv"];
 
     static readonly string StableProgramsFlip = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -39,6 +51,9 @@ internal static class ContextMenuNext
 
     internal static bool IsImageMenuCommand(string[] args) =>
         args.Contains(InstallImagesCommand) || args.Contains(RemoveImagesCommand);
+
+    internal static bool IsContentMenuCommand(string[] args) =>
+        args.Contains(InstallContentCommand) || args.Contains(RemoveContentCommand);
 
     internal static int ApplyImages(string[] args)
     {
@@ -104,6 +119,70 @@ internal static class ContextMenuNext
         return true;
     }
 
+    internal static int ApplyContent(string[] args)
+    {
+        if (!TryIsolateContentCommand(args, out _, out string error))
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+        string executable;
+        try { executable = RequireContentRegistryExecutable(Environment.ProcessPath); }
+        catch (Exception ex) when (IsRegistryFailure(ex))
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
+        return ApplyContent(args, executable, new CurrentUserRegistryStore(), ContextMenuCatalog.EngineSnapshot.Detected, Console.Error);
+    }
+
+    internal static int ApplyContent(string[] args, string executable, IRegistryStore store, ContextMenuCatalog.EngineSnapshot engines, TextWriter error)
+    {
+        if (!TryIsolateContentCommand(args, out bool remove, out string errorText))
+        {
+            error.WriteLine(errorText);
+            return 1;
+        }
+        try
+        {
+            if (remove) RemoveContentMenus(executable, store);
+            else InstallContentMenus(executable, engines, store);
+            return 0;
+        }
+        catch (Exception ex) when (IsRegistryFailure(ex))
+        {
+            error.WriteLine(ex.Message);
+            return 1;
+        }
+    }
+
+    internal static bool TryIsolateContentCommand(string[] args, out bool remove, out string error)
+    {
+        remove = false;
+        bool install = args.Contains(InstallContentCommand);
+        bool removing = args.Contains(RemoveContentCommand);
+        if (install && removing)
+        {
+            error = "Installazione e rimozione del menu PDF, TXT e dati non possono essere richieste insieme. Nessuna modifica al Registro.";
+            return false;
+        }
+        if (!install && !removing)
+        {
+            error = "Comando del menu PDF, TXT e dati assente.";
+            return false;
+        }
+        string expected = install ? InstallContentCommand : RemoveContentCommand;
+        string? extra = args.FirstOrDefault(arg => !arg.Equals(expected, StringComparison.Ordinal));
+        if (extra != null)
+        {
+            error = "Il comando " + expected + " non è compatibile con \"" + extra + "\". Nessuna modifica al Registro.";
+            return false;
+        }
+        remove = removing;
+        error = "";
+        return true;
+    }
+
     internal static string CommandLine(string executable, string format) =>
         ContextMenuPreview.CommandLine(executable, format);
 
@@ -119,6 +198,9 @@ internal static class ContextMenuNext
             "BMP" => "flip-menu-bmp-premium-v2.ico",
             "TIFF" => "flip-menu-tiff-premium-v2.ico",
             "GIF" => "flip-menu-gif-premium-v2.ico",
+            "TXT" or "HTML" or "MD" or "JSON" or "YAML" or "XML" or "CSV"
+                or "DOCX" or "EPUB" or "ODT" or "RTF" or "FB2" or "RST"
+                => "flip-menu-" + format.ToLowerInvariant() + "-premium-v2.ico",
             _ => throw new IOException("Nessuna icona prevista per il formato " + format + ".")
         };
     }
@@ -212,6 +294,25 @@ internal static class ContextMenuNext
         return true;
     }
 
+    internal static bool ContentIconsReady(string executable, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string[] formats = PlanContentMenus(engines)
+            .Where(plan => !plan.SharesCommandTree)
+            .SelectMany(plan => plan.Formats)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return IconsReady(executable, formats);
+    }
+
+    internal static void RegisterContentMenu(ContentMenuBlueprint blueprint, string executable, IRegistryStore store)
+    {
+        ValidateRegistrableExecutable(executable);
+        string full = Path.GetFullPath(executable);
+        if (!IconsReady(full, blueprint.Formats))
+            throw new IOException("Icone non disponibili: nessuna chiave del menu è stata registrata.");
+        InstallContentPlans([BuildContentPlan(full, blueprint)], store);
+    }
+
     internal static void RegisterImageMenu(ImageMenuBlueprint blueprint, string executable, IRegistryStore store)
     {
         ValidateRegistrableExecutable(executable);
@@ -275,6 +376,49 @@ internal static class ContextMenuNext
                 store.DeleteKey(item.Key);
             }
         });
+    }
+
+    internal static void InstallContentMenus(string executable, ContextMenuCatalog.EngineSnapshot engines, IRegistryStore store)
+    {
+        string full = RequireContentRegistryExecutable(executable);
+        var plans = CreateContentPlans(full, engines);
+        if (!ContentIconsReady(full, engines))
+            throw new IOException("Icone non disponibili: nessuna chiave del menu è stata registrata.");
+        InstallContentPlans(plans, store);
+    }
+
+    internal static void RemoveContentMenus(IRegistryStore store) =>
+        RemoveContentMenus(Path.Combine(StableProgramsFlip, "Flip.exe"), store);
+
+    internal static void RemoveContentMenus(string executable, IRegistryStore store)
+    {
+        string full = RequireContentRegistryExecutable(executable);
+        var plans = CreateContentPlans(full, new ContextMenuCatalog.EngineSnapshot(true, false, false));
+        var backups = plans.Select(plan => CaptureBackup(plan, store)).ToArray();
+        CommitImageChanges(backups, store, () =>
+        {
+            var owned = new List<(string Key, string Owner)>();
+            foreach (var plan in plans)
+            {
+                string root = RootOf(plan);
+                string owner = plan.Value(root, OwnerValue);
+                foreach (string key in plan.Keys) owned.Add((key, owner));
+            }
+            foreach (var item in owned.OrderByDescending(item => item.Key.Count(character => character == '\\')))
+            {
+                if (!store.KeyExists(item.Key) || store.Read(item.Key, OwnerValue) != item.Owner) continue;
+                if (store.SubKeys(item.Key).Count > 0) continue;
+                store.DeleteKey(item.Key);
+            }
+        });
+    }
+
+    internal static ContextMenuPlan[] CreateContentPlans(string executable, ContextMenuCatalog.EngineSnapshot engines)
+    {
+        ValidateRegistrableExecutable(executable);
+        var plans = PlanContentMenus(engines).Select(blueprint => BuildContentPlan(executable, blueprint)).ToArray();
+        VerifyContentPlans(plans);
+        return plans;
     }
 
     internal static void EnsureIcons(ContextMenuPlan plan)
@@ -367,7 +511,13 @@ internal static class ContextMenuNext
 
     internal static string VerbKey(string format) => Verb(ParentKey, format);
 
-    internal static string RequireImageRegistryExecutable(string? executable)
+    internal static string RequireImageRegistryExecutable(string? executable) =>
+        RequireApprovedExecutable(executable, "Il menu immagini accetta solo il percorso stabile o un laboratorio Flip-Lab già previsto.");
+
+    internal static string RequireContentRegistryExecutable(string? executable) =>
+        RequireApprovedExecutable(executable, "Il menu PDF, TXT e dati accetta solo il percorso stabile o un laboratorio Flip-Lab già previsto.");
+
+    static string RequireApprovedExecutable(string? executable, string rejectedPath)
     {
         if (string.IsNullOrWhiteSpace(executable))
             throw new IOException("Percorso eseguibile assente.");
@@ -379,7 +529,7 @@ internal static class ContextMenuNext
         }
         ValidateRegistrableExecutable(full);
         if (!IsStableInstallPath(full) && !IsLaboratoryPath(full))
-            throw new IOException("Il menu immagini accetta solo il percorso stabile o un laboratorio Flip-Lab già previsto.");
+            throw new IOException(rejectedPath);
         return full;
     }
 
@@ -445,6 +595,84 @@ internal static class ContextMenuNext
             values.Add(new(verb + @"\command", OwnerValue, blueprint.MenuId));
         }
         return new ContextMenuPlan(executable, blueprint.Formats.ToArray(), values, format => Verb(parentKey, format));
+    }
+
+    static ContextMenuPlan BuildContentPlan(string executable, ContentMenuBlueprint blueprint)
+    {
+        var values = DescribeContentMenu(blueprint, executable);
+        return new ContextMenuPlan(
+            Path.GetFullPath(executable),
+            blueprint.Formats.ToArray(),
+            values,
+            format => Verb(blueprint.CommandParentKey, format));
+    }
+
+    static void VerifyContentPlans(IReadOnlyList<ContextMenuPlan> plans)
+    {
+        var roots = new HashSet<string>(plans.Select(RootOf), StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plan in plans)
+        {
+            string root = RootOf(plan);
+            if (!IsContentMenuKey(root))
+                throw new IOException("Il menu PDF, TXT e dati uscirebbe dal perimetro previsto.");
+            foreach (string key in plan.Keys)
+            {
+                if (!seen.Add(key)) throw new IOException("Chiave duplicata nel menu PDF, TXT e dati: " + key);
+                if (!IsContentMenuKey(key) || !key.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Il menu PDF, TXT e dati uscirebbe dal perimetro previsto.");
+                if (IsProtectedMenuKey(key))
+                    throw new IOException("Il menu PDF, TXT e dati non può modificare menu esistenti.");
+            }
+            if (plan.Values.Any(value => value.Key.Equals(root, StringComparison.OrdinalIgnoreCase) && value.Name.Length == 0)
+                || plan.Keys.Contains(root + @"\command"))
+                throw new IOException("Il menu padre non esegue Flip.exe.");
+            string subCommands = plan.Value(root, "ExtendedSubCommandsKey");
+            if (!roots.Contains(@"Software\Classes\" + subCommands))
+                throw new IOException("Il sottomenu non appartiene a un menu PDF, TXT o dati del piano.");
+            foreach (var value in plan.Values)
+            {
+                if (value.Name.Length == 0 && value.Data.Contains("Flip.exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!value.Key.EndsWith(@"\command", StringComparison.OrdinalIgnoreCase)
+                        || !value.Data.Contains("--convert-menu ", StringComparison.Ordinal))
+                        throw new IOException("La voce di menu non usa --convert-menu.");
+                }
+                if (value.Name.Equals("Icon", StringComparison.OrdinalIgnoreCase)
+                    && !value.Data.EndsWith("-premium-v2.ico", StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Il menu PDF, TXT e dati richiede le icone premium.");
+            }
+        }
+    }
+
+    static void InstallContentPlans(IReadOnlyList<ContextMenuPlan> plans, IRegistryStore store)
+    {
+        VerifyContentPlans(plans);
+        foreach (var plan in plans) GuardContentMenu(plan, store);
+        var backups = plans.Select(plan => CaptureBackup(plan, store)).ToArray();
+        CommitImageChanges(backups, store, () =>
+        {
+            foreach (var plan in plans)
+                foreach (var value in plan.Values)
+                    store.Write(value.Key, value.Name, value.Data);
+        });
+    }
+
+    static void GuardContentMenu(ContextMenuPlan plan, IRegistryStore store)
+    {
+        string root = RootOf(plan);
+        string owner = plan.Value(root, OwnerValue);
+        if (!IsContentMenuKey(root))
+            throw new IOException("Il menu PDF, TXT e dati uscirebbe dal perimetro previsto.");
+        foreach (string key in plan.Keys)
+        {
+            if (!IsContentMenuKey(key) || !key.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Il menu PDF, TXT e dati uscirebbe dal perimetro previsto.");
+            if (IsProtectedMenuKey(key))
+                throw new IOException("Il menu PDF, TXT e dati non può modificare menu esistenti.");
+            if (store.KeyExists(key) && store.Read(key, OwnerValue) != owner)
+                throw new IOException("Una chiave del menu PDF, TXT e dati esiste già con un proprietario diverso: è stata preservata.");
+        }
     }
 
     static void VerifyImagePlans(IReadOnlyList<ContextMenuPlan> plans)
@@ -567,8 +795,16 @@ internal static class ContextMenuNext
         bool png = root.Equals(ParentKey, StringComparison.OrdinalIgnoreCase);
         if (!root.StartsWith(@"Software\Classes\SystemFileAssociations\", StringComparison.OrdinalIgnoreCase))
             throw new IOException(png ? "Il menu PNG uscirebbe dal perimetro previsto." : "Il menu definitivo uscirebbe dal perimetro previsto.");
+        if (plan.Keys.Any(IsContentMenuKey))
+        {
+            string full = Path.GetFullPath(plan.Executable);
+            if (!IconsReady(full, plan.Formats))
+                throw new IOException("Icone non disponibili: nessuna chiave del menu è stata registrata.");
+            RejectContentRegistration();
+        }
         foreach (string key in plan.Keys)
         {
+            if (IsContentMenuKey(key)) RejectContentRegistration();
             if (!key.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                 throw new IOException(png ? "Il menu PNG uscirebbe dal perimetro previsto." : "Il menu definitivo uscirebbe dal perimetro previsto.");
             if (key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
@@ -593,6 +829,195 @@ internal static class ContextMenuNext
             if (segment.Equals("bin", StringComparison.OrdinalIgnoreCase) || segment.Equals("obj", StringComparison.OrdinalIgnoreCase))
                 return true;
         return false;
+    }
+
+    internal static ContentMenuBlueprint[] PlanContentMenus(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        var blueprints = new ContentMenuBlueprint[ContentExtensions.Count];
+        for (int index = 0; index < ContentExtensions.Count; index++)
+        {
+            string extension = ContentExtensions[index];
+            var entries = ContextMenuCatalog.ForExtension(extension, engines);
+            if (entries.Length == 0)
+                throw new IOException("Il catalogo non offre conversioni per " + extension + ".");
+            string canonical = CanonicalContentExtension(extension);
+            bool shared = !canonical.Equals(extension, StringComparison.Ordinal);
+            if (shared)
+            {
+                string[] aliasFormats = entries.Select(entry => entry.TargetFormat).ToArray();
+                string[] canonicalFormats = ContextMenuCatalog.ForExtension(canonical, engines).Select(entry => entry.TargetFormat).ToArray();
+                if (!aliasFormats.SequenceEqual(canonicalFormats))
+                    throw new IOException("Le estensioni equivalenti non condividono le destinazioni: " + extension + ".");
+            }
+            string source = SourceFormat(extension);
+            if (entries.Any(entry => entry.TargetFormat.Equals(source, StringComparison.Ordinal)))
+                throw new IOException("La destinazione coincide con la sorgente: " + extension + ".");
+            string[] policy = Wheel.OrderFormats(Policy.Outputs(["flip.context" + extension], engines.Pandoc, engines.Office, engines.Ffmpeg));
+            if (!entries.Select(entry => entry.TargetFormat).SequenceEqual(policy))
+                throw new IOException("L'ordine del catalogo non coincide con la Policy per " + extension + ".");
+            foreach (var entry in entries) _ = IconFileName(entry.TargetFormat);
+            blueprints[index] = new ContentMenuBlueprint(
+                extension,
+                ContentMenuIdFor(extension),
+                ContentParentKeyFor(extension),
+                ContentSubCommandsPathFor(extension),
+                ContentParentKeyFor(canonical),
+                shared,
+                entries);
+        }
+        if (blueprints.Select(item => item.ParentKey).Distinct(StringComparer.OrdinalIgnoreCase).Count() != blueprints.Length)
+            throw new IOException("Chiave padre duplicata nel menu PDF, TXT e dati.");
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var blueprint in blueprints)
+        {
+            foreach (string key in PlannedContentKeys(blueprint))
+                if (!seen.Add(key)) throw new IOException("Chiave duplicata nel menu PDF, TXT e dati: " + key);
+        }
+        return blueprints;
+    }
+
+    internal static string ContentMenuIdFor(string extension)
+    {
+        string canonical = CanonicalContentExtension(NormalizeContentExtension(extension));
+        string stem = canonical.TrimStart('.');
+        return "Flip.Convert." + char.ToUpperInvariant(stem[0]) + stem[1..];
+    }
+
+    internal static string ContentParentKeyFor(string extension)
+    {
+        string normalized = NormalizeContentExtension(extension);
+        return @"Software\Classes\SystemFileAssociations\" + normalized + @"\shell\" + ContentMenuIdFor(normalized);
+    }
+
+    internal static string ContentSubCommandsPathFor(string extension)
+    {
+        string canonical = CanonicalContentExtension(NormalizeContentExtension(extension));
+        const string prefix = @"Software\Classes\";
+        string parent = ContentParentKeyFor(canonical);
+        if (!parent.StartsWith(prefix, StringComparison.Ordinal))
+            throw new IOException("Percorso comandi non valido.");
+        return parent[prefix.Length..];
+    }
+
+    internal static IReadOnlyList<string> PlannedContentKeys(ContentMenuBlueprint blueprint)
+    {
+        if (blueprint.SharesCommandTree) return [blueprint.ParentKey];
+        var keys = new List<string> { blueprint.ParentKey, blueprint.ParentKey + @"\shell" };
+        foreach (string format in blueprint.Formats)
+        {
+            string verb = Verb(blueprint.ParentKey, format);
+            keys.Add(verb);
+            keys.Add(verb + @"\command");
+        }
+        return keys;
+    }
+
+    internal static IReadOnlyList<RegistryValue> DescribeContentMenu(ContentMenuBlueprint blueprint, string executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable))
+            throw new IOException("Percorso eseguibile assente.");
+        if (blueprint.SharesCommandTree)
+        {
+            return
+            [
+                new(blueprint.ParentKey, "MUIVerb", ParentVerb),
+                new(blueprint.ParentKey, "ExtendedSubCommandsKey", blueprint.SubCommandsPath),
+                new(blueprint.ParentKey, "MultiSelectModel", "Single"),
+                new(blueprint.ParentKey, "NeverDefault", ""),
+                new(blueprint.ParentKey, OwnerValue, blueprint.MenuId)
+            ];
+        }
+        string directory = Path.GetDirectoryName(Path.GetFullPath(executable)) ?? throw new IOException("Percorso eseguibile assente.");
+        string parentKey = blueprint.ParentKey;
+        var values = new List<RegistryValue>
+        {
+            new(parentKey, "MUIVerb", ParentVerb),
+            new(parentKey, "ExtendedSubCommandsKey", blueprint.SubCommandsPath),
+            new(parentKey, "MultiSelectModel", "Single"),
+            new(parentKey, "NeverDefault", ""),
+            new(parentKey, OwnerValue, blueprint.MenuId),
+            new(parentKey + @"\shell", OwnerValue, blueprint.MenuId)
+        };
+        foreach (var entry in blueprint.Entries)
+        {
+            string verb = Verb(parentKey, entry.TargetFormat);
+            values.Add(new(verb, "MUIVerb", entry.Title));
+            values.Add(new(verb, "Icon", Path.GetFullPath(Path.Combine(directory, IconFileName(entry.TargetFormat)))));
+            values.Add(new(verb, "MultiSelectModel", "Single"));
+            values.Add(new(verb, "NeverDefault", ""));
+            values.Add(new(verb, OwnerValue, blueprint.MenuId));
+            values.Add(new(verb + @"\command", "", CommandLine(executable, entry.TargetFormat)));
+            values.Add(new(verb + @"\command", OwnerValue, blueprint.MenuId));
+        }
+        return values;
+    }
+
+    internal static void RefuseContentMenuRegistration(IRegistryStore store)
+    {
+        _ = store ?? throw new IOException("Registro assente.");
+        RejectContentRegistration();
+    }
+
+    static void RejectContentRegistration() =>
+        throw new IOException("Il menu PDF, TXT e dati non è registrabile prima del gate icone e dei controlli M5.3.4. Nessuna chiave è stata scritta.");
+
+    static bool IsContentMenuKey(string key)
+    {
+        const string prefix = @"Software\Classes\SystemFileAssociations\";
+        if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        string rest = key[prefix.Length..];
+        foreach (string extension in ContentExtensions)
+        {
+            if (rest.Equals(extension, StringComparison.OrdinalIgnoreCase)
+                || rest.StartsWith(extension + @"\", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    static bool IsProtectedMenuKey(string key)
+    {
+        if (key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith(ContextMenuPreview.OriginalMenuKey + @"\", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (key.Equals(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith(ContextMenuPreview.ParentKey + @"\", StringComparison.OrdinalIgnoreCase))
+            return true;
+        const string prefix = @"Software\Classes\SystemFileAssociations\";
+        if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        string rest = key[prefix.Length..];
+        foreach (string extension in ImageExtensions)
+        {
+            if (rest.Equals(extension, StringComparison.OrdinalIgnoreCase)
+                || rest.StartsWith(extension + @"\", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    static string CanonicalContentExtension(string normalized) => normalized switch
+    {
+        ".yml" => ".yaml",
+        _ => normalized
+    };
+
+    static string SourceFormat(string extension) => extension switch
+    {
+        ".pdf" => "PDF",
+        ".txt" => "TXT",
+        ".json" => "JSON",
+        ".yaml" or ".yml" => "YAML",
+        ".xml" => "XML",
+        ".csv" => "CSV",
+        _ => throw new IOException("Estensione contenuto non prevista: " + extension + ".")
+    };
+
+    static string NormalizeContentExtension(string extension)
+    {
+        if (string.IsNullOrWhiteSpace(extension)) throw new IOException("Estensione contenuto assente.");
+        string normalized = (extension.StartsWith('.') ? extension : "." + extension).ToLowerInvariant();
+        if (!ContentExtensions.Contains(normalized)) throw new IOException("Estensione contenuto non prevista: " + extension + ".");
+        return normalized;
     }
 
     static bool IsUnauthorizedTemporaryBuild(string fullPath)
@@ -640,6 +1065,37 @@ internal static class ContextMenuNext
 internal sealed class ImageMenuBlueprint
 {
     internal ImageMenuBlueprint(
+        string extension,
+        string menuId,
+        string parentKey,
+        string subCommandsPath,
+        string commandParentKey,
+        bool sharesCommandTree,
+        IReadOnlyList<ContextMenuCatalog.ConversionEntry> entries)
+    {
+        Extension = extension;
+        MenuId = menuId;
+        ParentKey = parentKey;
+        SubCommandsPath = subCommandsPath;
+        CommandParentKey = commandParentKey;
+        SharesCommandTree = sharesCommandTree;
+        Entries = entries;
+        Formats = entries.Select(entry => entry.TargetFormat).ToArray();
+    }
+
+    internal string Extension { get; }
+    internal string MenuId { get; }
+    internal string ParentKey { get; }
+    internal string SubCommandsPath { get; }
+    internal string CommandParentKey { get; }
+    internal bool SharesCommandTree { get; }
+    internal IReadOnlyList<ContextMenuCatalog.ConversionEntry> Entries { get; }
+    internal IReadOnlyList<string> Formats { get; }
+}
+
+internal sealed class ContentMenuBlueprint
+{
+    internal ContentMenuBlueprint(
         string extension,
         string menuId,
         string parentKey,

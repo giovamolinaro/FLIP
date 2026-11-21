@@ -503,9 +503,18 @@ internal static class DataTools
         return node.ToJsonString() + "\n";
     }
 
+    static JsonElement ReadJsonElement(JsonValue value)
+    {
+        if (value.TryGetValue(out JsonElement element))
+            return element;
+
+        using JsonDocument document = JsonDocument.Parse(value.ToJsonString());
+        return document.RootElement.Clone();
+    }
+
     static string FormatYamlScalar(JsonValue val)
     {
-        var el = val.GetValue<JsonElement>();
+        var el = ReadJsonElement(val);
         return el.ValueKind switch
         {
             JsonValueKind.True => "true",
@@ -532,7 +541,7 @@ internal static class DataTools
         if (node is null) return;
         if (node is JsonValue val)
         {
-            var el = val.GetValue<JsonElement>();
+            var el = ReadJsonElement(val);
             parent.Value = el.ValueKind == JsonValueKind.String ? (el.GetString() ?? "") : el.GetRawText();
             return;
         }
@@ -619,7 +628,7 @@ internal static class DataTools
         if (node is null) return "";
         if (node is JsonValue v)
         {
-            var el = v.GetValue<JsonElement>();
+            var el = ReadJsonElement(v);
             return el.ValueKind == JsonValueKind.String ? (el.GetString() ?? "") : el.GetRawText();
         }
         return node.ToJsonString();

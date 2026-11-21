@@ -20,6 +20,7 @@ internal static class Program
         try
         {
             if (ContextMenuNext.IsImageMenuCommand(args)) return ContextMenuNext.ApplyImages(args);
+            if (ContextMenuNext.IsContentMenuCommand(args)) return ContextMenuNext.ApplyContent(args);
             if (args.Contains("--preview-menu-progress")) return MenuProgressWindow.ShowPreview();
             if (args.Contains("--convert-menu")) return MenuConversion.Launch(args, new LiveMenuEndpoint());
             int evidence = Array.IndexOf(args, "--evidence"); if (evidence >= 0) Evidence.DirectoryPath = Path.GetFullPath(OptionValue(args, "--evidence"));
@@ -85,12 +86,12 @@ internal static class Program
     }
     internal static bool OpensWheelOnStartup(string[] args)
     {
-        if (args.Contains("--preview-menu-progress") || args.Contains("--convert-menu") || args.Contains("--multi") || ContextMenuPreview.IsPreviewCommand(args) || ContextMenuNext.IsPlannedCommand(args) || ContextMenuNext.IsImageMenuCommand(args)) return false;
+        if (args.Contains("--preview-menu-progress") || args.Contains("--convert-menu") || args.Contains("--multi") || ContextMenuPreview.IsPreviewCommand(args) || ContextMenuNext.IsPlannedCommand(args) || ContextMenuNext.IsImageMenuCommand(args) || ContextMenuNext.IsContentMenuCommand(args)) return false;
         return Array.IndexOf(args, "--files") >= 0;
     }
     internal static bool OpensPanelOnStartup(string[] args)
     {
-        if (args.Contains("--preview-menu-progress") || args.Contains("--convert-menu") || ContextMenuPreview.IsPreviewCommand(args) || ContextMenuNext.IsPlannedCommand(args) || ContextMenuNext.IsImageMenuCommand(args)) return false;
+        if (args.Contains("--preview-menu-progress") || args.Contains("--convert-menu") || ContextMenuPreview.IsPreviewCommand(args) || ContextMenuNext.IsPlannedCommand(args) || ContextMenuNext.IsImageMenuCommand(args) || ContextMenuNext.IsContentMenuCommand(args)) return false;
         return args.Contains("--multi") && Array.IndexOf(args, "--files") >= 0;
     }
     sealed class LiveMenuEndpoint : MenuConversion.IEndpoint

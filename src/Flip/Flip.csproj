@@ -30,5 +30,18 @@
     <Content Include="flip-menu-bmp-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="flip-menu-tiff-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="flip-menu-gif-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-txt-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-json-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-yaml-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-xml-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-csv-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-html-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-md-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-docx-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-epub-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-odt-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-rtf-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-fb2-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-rst-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

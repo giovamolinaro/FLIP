@@ -9,6 +9,8 @@ internal static class InputTests
     {
         if (Environment.GetCommandLineArgs().Any(arg => arg.Equals("--image-matrix-only", StringComparison.Ordinal)))
             return ImageMatrixTests.Run();
+        if (Environment.GetCommandLineArgs().Any(arg => arg.Equals("--content-matrix-only", StringComparison.Ordinal)))
+            return ContentMatrixTests.Run();
         var shortcut = WheelShortcut.Parse("OEM102");
         var checks = new Dictionary<string, bool>
         {
@@ -187,6 +189,8 @@ internal static class InputTests
         AddMenuConversionChecks(checks);
         AddContextMenuPreviewChecks(checks);
         AddContextMenuNextChecks(checks);
+        AddContentMenuBlueprintChecks(checks);
+        AddContentMenuInstallChecks(checks);
         AddMenuProgressChecks(checks);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
@@ -807,6 +811,27 @@ internal static class InputTests
         Check(checks, "next_image_rollback_access_and_security", () => NextImageRollbackAccessAndSecurity(native));
         Check(checks, "next_image_remove_without_icons", () => NextImageRemoveWithoutIcons(native));
         Check(checks, "next_image_m4_window_unchanged", () => NextImageUsesMenuProgress(native, exe));
+    }
+
+    static void AddContentMenuBlueprintChecks(Dictionary<string, bool> checks)
+    {
+        var native = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        var pandoc = new ContextMenuCatalog.EngineSnapshot(true, false, false);
+        string exe = @"C:\Programmi Flip\Flip.exe";
+        Check(checks, "content_seven_extensions_and_menu_ids", () => ContentSevenExtensions(native));
+        Check(checks, "content_native_43_and_pandoc_59", () => ContentDestinationCounts(native, pandoc));
+        Check(checks, "content_no_source_identity", () => ContentNoSourceIdentity(native, pandoc));
+        Check(checks, "content_yaml_yml_alias", () => ContentYamlAlias(native, pandoc, exe));
+        Check(checks, "content_order_matches_policy", () => ContentOrderMatchesPolicy());
+        Check(checks, "content_office_ffmpeg_invariant", () => ContentOfficeFfmpegInvariant());
+        Check(checks, "content_keys_do_not_collide", () => ContentKeysDoNotCollide(native, pandoc));
+        Check(checks, "content_image_plans_unchanged", () => ContentLeavesImagePlans(native, pandoc));
+        Check(checks, "content_menu_id_for_txt_unchanged", () => ContentMenuIdForTxtUnchanged());
+        Check(checks, "content_icons_named_without_files", () => ContentIconsNamedWithoutFiles(native, pandoc, exe));
+        Check(checks, "content_premium_v2_twenty_icons_in_output", () => ContentPremiumV2TwentyIconsInOutput());
+        Check(checks, "content_icons_gate_native_pandoc_and_missing", () => ContentIconsGateRegistration(native, pandoc));
+        Check(checks, "content_registration_refused", () => ContentRegistrationRefused(native, exe));
+        Check(checks, "content_menu_properties", () => ContentMenuProperties(native, pandoc, exe));
     }
 
     static ContextMenuPlan NextPlan(ContextMenuCatalog.EngineSnapshot engines, string exe) =>
@@ -2175,6 +2200,1073 @@ internal static class InputTests
             && MenuConversion.TryDeserialize(wire, out var request, out _)
             && request.Format == "JPG"
             && request.File == photo;
+    }
+
+    static bool ContentSevenExtensions(ContextMenuCatalog.EngineSnapshot engines)
+    {
+        string[] expected = [".pdf", ".txt", ".json", ".yaml", ".yml", ".xml", ".csv"];
+        if (!ContextMenuNext.ContentExtensions.SequenceEqual(expected)) return false;
+        var plans = ContextMenuNext.PlanContentMenus(engines);
+        if (plans.Length != 7 || !plans.Select(plan => plan.Extension).SequenceEqual(expected)) return false;
+        string[] ids = ["Flip.Convert.Pdf", "Flip.Convert.Txt", "Flip.Convert.Json", "Flip.Convert.Yaml", "Flip.Convert.Yaml", "Flip.Convert.Xml", "Flip.Convert.Csv"];
+        if (!plans.Select(plan => plan.MenuId).SequenceEqual(ids)) return false;
+        var supported = ContextMenuCatalog.SupportedSourceExtensions();
+        return expected.All(extension => supported.Contains(extension))
+            && plans.All(plan => plan.MenuId == ContextMenuNext.ContentMenuIdFor(plan.Extension)
+                && plan.ParentKey == ContextMenuNext.ContentParentKeyFor(plan.Extension)
+                && plan.SubCommandsPath == ContextMenuNext.ContentSubCommandsPathFor(plan.Extension));
+    }
+
+    static bool ContentDestinationCounts(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        var without = ContextMenuNext.PlanContentMenus(native);
+        var with = ContextMenuNext.PlanContentMenus(pandoc);
+        if (without.Sum(plan => plan.Formats.Count) != 43) return false;
+        if (with.Sum(plan => plan.Formats.Count) != 59) return false;
+        int added = 0;
+        for (int index = 0; index < without.Length; index++)
+        {
+            int delta = with[index].Formats.Count - without[index].Formats.Count;
+            if (without[index].Extension is ".pdf" or ".txt")
+            {
+                if (delta != 8) return false;
+            }
+            else if (delta != 0 || !without[index].Formats.SequenceEqual(with[index].Formats)) return false;
+            added += delta;
+        }
+        return added == 16
+            && without.Single(plan => plan.Extension == ".pdf").Formats.SequenceEqual(["TXT", "JPG", "PNG", "WEBP"])
+            && without.Single(plan => plan.Extension == ".txt").Formats.SequenceEqual(["PDF", "JPG", "PNG", "WEBP"])
+            && without.Single(plan => plan.Extension == ".json").Formats.SequenceEqual(["PDF", "HTML", "MD", "TXT", "YAML", "XML", "CSV"])
+            && without.Single(plan => plan.Extension == ".yaml").Formats.SequenceEqual(["PDF", "HTML", "MD", "TXT", "JSON", "XML", "CSV"])
+            && without.Single(plan => plan.Extension == ".xml").Formats.SequenceEqual(["PDF", "HTML", "MD", "TXT", "JSON", "YAML", "CSV"])
+            && without.Single(plan => plan.Extension == ".csv").Formats.SequenceEqual(["PDF", "HTML", "MD", "TXT", "JSON", "YAML", "XML"]);
+    }
+
+    static bool ContentNoSourceIdentity(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        var banned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [".pdf"] = "PDF", [".txt"] = "TXT", [".json"] = "JSON",
+            [".yaml"] = "YAML", [".yml"] = "YAML", [".xml"] = "XML", [".csv"] = "CSV"
+        };
+        foreach (var engines in new[] { native, pandoc })
+        {
+            foreach (var plan in ContextMenuNext.PlanContentMenus(engines))
+            {
+                if (plan.Formats.Contains(banned[plan.Extension], StringComparer.Ordinal)) return false;
+                if (plan.Formats.Contains("YML", StringComparer.Ordinal)) return false;
+                if (plan.Formats.Distinct(StringComparer.Ordinal).Count() != plan.Formats.Count) return false;
+            }
+        }
+        return true;
+    }
+
+    static bool ContentYamlAlias(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc, string exe)
+    {
+        foreach (var engines in new[] { native, pandoc })
+        {
+            var plans = ContextMenuNext.PlanContentMenus(engines);
+            var yaml = plans.Single(plan => plan.Extension == ".yaml");
+            var yml = plans.Single(plan => plan.Extension == ".yml");
+            if (yaml.SharesCommandTree || !yml.SharesCommandTree) return false;
+            if (yaml.MenuId != "Flip.Convert.Yaml" || yml.MenuId != yaml.MenuId) return false;
+            if (!yaml.Formats.SequenceEqual(yml.Formats) || yaml.Formats.Contains("YAML")) return false;
+            if (yml.SubCommandsPath != yaml.SubCommandsPath || yml.CommandParentKey != yaml.ParentKey) return false;
+            if (yml.SubCommandsPath != @"SystemFileAssociations\.yaml\shell\Flip.Convert.Yaml") return false;
+            if (!yml.ParentKey.Contains(@"\.yml\shell\Flip.Convert.Yaml", StringComparison.Ordinal)) return false;
+            var ymlKeys = ContextMenuNext.PlannedContentKeys(yml);
+            var yamlKeys = ContextMenuNext.PlannedContentKeys(yaml);
+            if (ymlKeys.Count != 1 || ymlKeys[0] != yml.ParentKey) return false;
+            if (ymlKeys.Any(key => yamlKeys.Contains(key, StringComparer.OrdinalIgnoreCase))) return false;
+            if (yamlKeys.Count != 2 + yaml.Formats.Count * 2) return false;
+            if (yamlKeys.Any(key => key.Contains(@"\.yml\", StringComparison.OrdinalIgnoreCase))) return false;
+            var pointer = ContextMenuNext.DescribeContentMenu(yml, exe);
+            var tree = ContextMenuNext.DescribeContentMenu(yaml, exe);
+            if (pointer.Count != 5 || pointer.Any(value => value.Name.Length == 0 || value.Name.Equals("Icon", StringComparison.OrdinalIgnoreCase))) return false;
+            if (pointer.Single(value => value.Name == "ExtendedSubCommandsKey").Data != yaml.SubCommandsPath) return false;
+            int commands = tree.Count(value => value.Name.Length == 0);
+            if (commands != yaml.Formats.Count) return false;
+            if (tree.Any(value => value.Key.Contains(@"\.yml\", StringComparison.OrdinalIgnoreCase))) return false;
+        }
+        return true;
+    }
+
+    static bool ContentOrderMatchesPolicy()
+    {
+        foreach (var engines in ContextMenuCatalog.EngineSnapshot.AllCombinations())
+        {
+            foreach (var plan in ContextMenuNext.PlanContentMenus(engines))
+            {
+                string[] policy = Wheel.OrderFormats(Policy.Outputs(["flip.context" + plan.Extension], engines.Pandoc, engines.Office, engines.Ffmpeg));
+                string[] catalog = ContextMenuCatalog.ForExtension(plan.Extension, engines).Select(entry => entry.TargetFormat).ToArray();
+                if (!plan.Formats.SequenceEqual(policy) || !plan.Formats.SequenceEqual(catalog)) return false;
+                if (!plan.Entries.Select(entry => entry.Title).SequenceEqual(plan.Formats.Select(format => "Converti in " + format))) return false;
+            }
+        }
+        return true;
+    }
+
+    static bool ContentOfficeFfmpegInvariant()
+    {
+        var native = ContextMenuNext.PlanContentMenus(new ContextMenuCatalog.EngineSnapshot(false, false, false));
+        foreach (bool office in new[] { false, true })
+        foreach (bool ffmpeg in new[] { false, true })
+        {
+            var again = ContextMenuNext.PlanContentMenus(new ContextMenuCatalog.EngineSnapshot(false, office, ffmpeg));
+            if (!ContentSameDestinations(native, again)) return false;
+        }
+        var pandoc = ContextMenuNext.PlanContentMenus(new ContextMenuCatalog.EngineSnapshot(true, false, false));
+        foreach (bool office in new[] { false, true })
+        foreach (bool ffmpeg in new[] { false, true })
+        {
+            var again = ContextMenuNext.PlanContentMenus(new ContextMenuCatalog.EngineSnapshot(true, office, ffmpeg));
+            if (!ContentSameDestinations(pandoc, again)) return false;
+        }
+        return !ContentSameDestinations(native, pandoc);
+    }
+
+    static bool ContentSameDestinations(ContentMenuBlueprint[] left, ContentMenuBlueprint[] right)
+    {
+        if (left.Length != right.Length) return false;
+        for (int index = 0; index < left.Length; index++)
+            if (left[index].Extension != right[index].Extension || !left[index].Formats.SequenceEqual(right[index].Formats)) return false;
+        return true;
+    }
+
+    static bool ContentKeysDoNotCollide(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        var imageKeys = ContextMenuNext.PlanImageMenus(native).SelectMany(ContextMenuNext.PlannedKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var imageIds = ContextMenuNext.PlanImageMenus(native).Select(plan => plan.MenuId).ToHashSet(StringComparer.Ordinal);
+        foreach (var engines in new[] { native, pandoc })
+        {
+            var plans = ContextMenuNext.PlanContentMenus(engines);
+            if (plans.Select(plan => plan.ParentKey).Distinct(StringComparer.OrdinalIgnoreCase).Count() != plans.Length) return false;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var plan in plans)
+            {
+                if (imageIds.Contains(plan.MenuId) || plan.MenuId == ContextMenuPreview.PrototypeId || plan.MenuId == "Flip.Convert") return false;
+                foreach (string key in ContextMenuNext.PlannedContentKeys(plan))
+                {
+                    if (!seen.Add(key) || imageKeys.Contains(key)) return false;
+                    if (key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
+                        || key.StartsWith(ContextMenuPreview.OriginalMenuKey + @"\", StringComparison.OrdinalIgnoreCase)
+                        || key.Equals(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase)
+                        || key.StartsWith(ContextMenuPreview.ParentKey + @"\", StringComparison.OrdinalIgnoreCase)) return false;
+                    if (!key.StartsWith(@"Software\Classes\SystemFileAssociations\", StringComparison.OrdinalIgnoreCase)) return false;
+                    if (key.Contains(@"\CLSID", StringComparison.OrdinalIgnoreCase) || key.Contains("UserChoice", StringComparison.OrdinalIgnoreCase)) return false;
+                    if (key.Contains(ContextMenuNext.ParentKey, StringComparison.OrdinalIgnoreCase)) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    static bool ContentLeavesImagePlans(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string[] before = ImagePlanSignature(native);
+        _ = ContextMenuNext.PlanContentMenus(native);
+        _ = ContextMenuNext.PlanContentMenus(pandoc);
+        _ = ContextMenuNext.PlanContentMenus(new ContextMenuCatalog.EngineSnapshot(true, true, true));
+        if (!before.SequenceEqual(ImagePlanSignature(native))) return false;
+        if (!before.SequenceEqual(ImagePlanSignature(pandoc))) return false;
+        if (!before.SequenceEqual(ImagePlanSignature(new ContextMenuCatalog.EngineSnapshot(true, true, true)))) return false;
+        var png = ContextMenuNext.PlanImageMenus(native).Single(plan => plan.Extension == ".png");
+        return png.MenuId == ContextMenuNext.MenuId
+            && png.ParentKey == ContextMenuNext.ParentKey
+            && png.Formats.SequenceEqual(ContextMenuNext.Formats)
+            && png.Formats.SequenceEqual(["PDF", "JPG", "WEBP", "BMP", "TIFF", "GIF"])
+            && ContextMenuNext.ImageExtensions.SequenceEqual(Policy.Images);
+    }
+
+    static string[] ImagePlanSignature(ContextMenuCatalog.EngineSnapshot engines) =>
+        ContextMenuNext.PlanImageMenus(engines).Select(plan =>
+            plan.Extension + "|" + plan.MenuId + "|" + plan.ParentKey + "|" + plan.SharesCommandTree
+            + "|" + string.Join(",", plan.Formats)
+            + "|" + string.Join(";", ContextMenuNext.PlannedKeys(plan))).ToArray();
+
+    static bool ContentMenuIdForTxtUnchanged()
+    {
+        bool textRejected = false;
+        try { ContextMenuNext.MenuIdFor(".txt"); }
+        catch (IOException) { textRejected = true; }
+        bool pdfRejected = false;
+        try { ContextMenuNext.MenuIdFor(".pdf"); }
+        catch (IOException) { pdfRejected = true; }
+        bool parentRejected = false;
+        try { ContextMenuNext.ParentKeyFor(".txt"); }
+        catch (IOException) { parentRejected = true; }
+        return textRejected
+            && pdfRejected
+            && parentRejected
+            && ContextMenuNext.ContentMenuIdFor(".txt") == "Flip.Convert.Txt"
+            && ContextMenuNext.ContentMenuIdFor("TXT") == "Flip.Convert.Txt"
+            && ContextMenuNext.MenuId == "Flip.Convert.Png";
+    }
+
+    static bool ContentIconsNamedWithoutFiles(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc, string exe)
+    {
+        string[] future = ["TXT", "HTML", "MD", "JSON", "YAML", "XML", "CSV", "DOCX", "EPUB", "ODT", "RTF", "FB2", "RST"];
+        if (future.Length != 13) return false;
+        var names = future.Select(ContextMenuNext.IconFileName).ToArray();
+        if (names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 13) return false;
+        if (names.Any(name => !name.EndsWith("-premium-v2.ico", StringComparison.OrdinalIgnoreCase))) return false;
+        for (int index = 0; index < future.Length; index++)
+            if (names[index] != "flip-menu-" + future[index].ToLowerInvariant() + "-premium-v2.ico") return false;
+        if (ContextMenuNext.IconFileName("PNG") != "flip-menu-png-premium-v2.ico"
+            || ContextMenuNext.IconFileName("JPG") != ContextMenuPreview.IconFileName("JPG")
+            || ContextMenuNext.IconFileName("PDF") != ContextMenuPreview.IconFileName("PDF")
+            || ContextMenuNext.IconFileName("WEBP") != ContextMenuPreview.IconFileName("WEBP")) return false;
+        string directory = Path.Combine(Path.GetTempPath(), "Flip-Lab", "content-icons-" + Guid.NewGuid().ToString("N"));
+        string isolated = Path.Combine(directory, "Flip.exe");
+        foreach (var engines in new[] { native, pandoc })
+        {
+            foreach (var plan in ContextMenuNext.PlanContentMenus(engines).Where(plan => !plan.SharesCommandTree))
+            {
+                var values = ContextMenuNext.DescribeContentMenu(plan, isolated);
+                foreach (string format in plan.Formats)
+                {
+                    string icon = values.Single(value => value.Key.EndsWith(@"\shell\" + format.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase) && value.Name == "Icon").Data;
+                    if (!icon.EndsWith(ContextMenuNext.IconFileName(format), StringComparison.OrdinalIgnoreCase)) return false;
+                    if (File.Exists(icon)) return false;
+                }
+            }
+        }
+        return !Directory.Exists(directory);
+    }
+
+    static bool ContentRegistrationRefused(ContextMenuCatalog.EngineSnapshot engines, string _)
+    {
+        if (ContextMenuNext.IsPlannedCommand(["--install-context-menu-content"])
+            || ContextMenuNext.IsPlannedCommand(["--install-context-menu-pdf"])
+            || ContextMenuNext.IsImageMenuCommand(["--install-context-menu-content"])
+            || ContextMenuNext.IsImageMenuCommand(["--remove-context-menu-pdf"])) return false;
+        var touch = new TouchRegistry();
+        bool refused = false;
+        try { ContextMenuNext.RefuseContentMenuRegistration(touch); }
+        catch (IOException ex) { refused = ex.Message.Contains("M5.3.4", StringComparison.Ordinal) && ex.Message.Contains("Nessuna chiave", StringComparison.Ordinal); }
+        if (!refused || touch.Calls != 0) return false;
+        string directory = Path.Combine(Path.GetTempPath(), "Flip-Lab", "content-reg-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            var pdf = ContextMenuNext.PlanContentMenus(engines).Single(plan => plan.Extension == ".pdf");
+            var values = ContextMenuNext.DescribeContentMenu(pdf, exe);
+            var plan = new ContextMenuPlan(exe, pdf.Formats.ToArray(), values);
+            var memory = new MemoryRegistryStore();
+            bool installRefused = false;
+            try { ContextMenuNext.Install(plan, memory); }
+            catch (IOException ex) { installRefused = ex.Message.Contains("M5.3.4", StringComparison.Ordinal); }
+            var blocked = new TouchRegistry();
+            try { ContextMenuNext.Install(plan, blocked); }
+            catch (IOException) { }
+            return installRefused && memory.KeyCount == 0 && blocked.Calls == 0 && !memory.KeyExists(pdf.ParentKey);
+        }
+        finally { try { Directory.Delete(directory, true); } catch (IOException) { } }
+    }
+
+    static readonly string[] PremiumV2IconFiles =
+    [
+        "flip-menu-jpg-premium-v2.ico", "flip-menu-pdf-premium-v2.ico", "flip-menu-webp-premium-v2.ico",
+        "flip-menu-png-premium-v2.ico", "flip-menu-bmp-premium-v2.ico", "flip-menu-tiff-premium-v2.ico",
+        "flip-menu-gif-premium-v2.ico", "flip-menu-txt-premium-v2.ico", "flip-menu-json-premium-v2.ico",
+        "flip-menu-yaml-premium-v2.ico", "flip-menu-xml-premium-v2.ico", "flip-menu-csv-premium-v2.ico",
+        "flip-menu-html-premium-v2.ico", "flip-menu-md-premium-v2.ico", "flip-menu-docx-premium-v2.ico",
+        "flip-menu-epub-premium-v2.ico", "flip-menu-odt-premium-v2.ico", "flip-menu-rtf-premium-v2.ico",
+        "flip-menu-fb2-premium-v2.ico", "flip-menu-rst-premium-v2.ico"
+    ];
+
+    static bool CopyPremiumV2Icons(string directory)
+    {
+        foreach (string name in PremiumV2IconFiles)
+        {
+            string source = Path.Combine(AppContext.BaseDirectory, name);
+            if (!File.Exists(source) || !ContextMenuPreview.IconIsValid(source)) return false;
+            File.Copy(source, Path.Combine(directory, name), true);
+        }
+        return true;
+    }
+
+    static bool ContentPremiumV2TwentyIconsInOutput()
+    {
+        if (PremiumV2IconFiles.Length != 20 || PremiumV2IconFiles.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 20) return false;
+        foreach (string name in PremiumV2IconFiles)
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, name);
+            if (!File.Exists(path) || !ContextMenuPreview.IconIsValid(path)) return false;
+        }
+        string[] contentOnly =
+        [
+            "flip-menu-txt-premium-v2.ico", "flip-menu-json-premium-v2.ico", "flip-menu-yaml-premium-v2.ico",
+            "flip-menu-xml-premium-v2.ico", "flip-menu-csv-premium-v2.ico", "flip-menu-html-premium-v2.ico",
+            "flip-menu-md-premium-v2.ico", "flip-menu-docx-premium-v2.ico", "flip-menu-epub-premium-v2.ico",
+            "flip-menu-odt-premium-v2.ico", "flip-menu-rtf-premium-v2.ico", "flip-menu-fb2-premium-v2.ico",
+            "flip-menu-rst-premium-v2.ico"
+        ];
+        return contentOnly.All(name => PremiumV2IconFiles.Contains(name, StringComparer.OrdinalIgnoreCase));
+    }
+
+    static bool ContentIconsGateRegistration(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "Flip-Lab", "content-gate-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.Combine(directory, "Flip.exe");
+            if (!ContextMenuNext.ContentIconsReady(exe, native) || !ContextMenuNext.ContentIconsReady(exe, pandoc)) return false;
+            var nativePdf = ContextMenuNext.PlanContentMenus(native).Single(plan => plan.Extension == ".pdf");
+            var pandocPdf = ContextMenuNext.PlanContentMenus(pandoc).Single(plan => plan.Extension == ".pdf");
+            var nativeMemory = new MemoryRegistryStore();
+            ContextMenuNext.RegisterContentMenu(nativePdf, exe, nativeMemory);
+            if (!ContentBlueprintInstalled(nativeMemory, exe, nativePdf)) return false;
+            if (nativeMemory.KeyExists(ContextMenuNext.ContentParentKeyFor(".txt"))) return false;
+            string nativeOnce = nativeMemory.Export();
+            ContextMenuNext.RegisterContentMenu(nativePdf, exe, nativeMemory);
+            if (nativeMemory.Export() != nativeOnce) return false;
+            var pandocMemory = new MemoryRegistryStore();
+            ContextMenuNext.RegisterContentMenu(pandocPdf, exe, pandocMemory);
+            if (!ContentBlueprintInstalled(pandocMemory, exe, pandocPdf)) return false;
+            if (pandocPdf.Formats.Count <= nativePdf.Formats.Count || pandocMemory.KeyCount <= nativeMemory.KeyCount) return false;
+
+            string missingDir = Path.Combine(Path.GetTempPath(), "Flip-Lab", "content-missing-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(missingDir);
+            try
+            {
+                foreach (string name in PremiumV2IconFiles)
+                {
+                    if (name.Equals("flip-menu-docx-premium-v2.ico", StringComparison.OrdinalIgnoreCase)) continue;
+                    File.Copy(Path.Combine(directory, name), Path.Combine(missingDir, name));
+                }
+                string missingExe = Path.Combine(missingDir, "Flip.exe");
+                if (ContextMenuNext.ContentIconsReady(missingExe, pandoc)) return false;
+                var untouched = new TouchRegistry();
+                bool missingRefused = false;
+                try { ContextMenuNext.RegisterContentMenu(pandocPdf, missingExe, untouched); }
+                catch (IOException ex) { missingRefused = ex.Message.Contains("Icone non disponibili", StringComparison.Ordinal); }
+                if (!missingRefused || untouched.Calls != 0) return false;
+                var blocked = new MemoryRegistryStore();
+                try { ContextMenuNext.RegisterContentMenu(pandocPdf, missingExe, blocked); }
+                catch (IOException) { }
+                if (blocked.KeyCount != 0) return false;
+            }
+            finally { try { Directory.Delete(missingDir, true); } catch (IOException) { } }
+
+            var png = ContextMenuNext.PlanImageMenus(native).Single(plan => plan.Extension == ".png");
+            var imageMemory = new MemoryRegistryStore();
+            ContextMenuNext.RegisterImageMenu(png, exe, imageMemory);
+            return imageMemory.KeyExists(ContextMenuNext.ParentKey);
+        }
+        finally { try { Directory.Delete(directory, true); } catch (IOException) { } }
+    }
+
+    static bool ContentMenuProperties(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc, string exe)
+    {
+        foreach (var engines in new[] { native, pandoc })
+        {
+            foreach (var blueprint in ContextMenuNext.PlanContentMenus(engines))
+            {
+                var values = ContextMenuNext.DescribeContentMenu(blueprint, exe);
+                string parent = blueprint.ParentKey;
+                if (Value(values, parent, "MUIVerb") != "Converti con Flip") return false;
+                if (Value(values, parent, "ExtendedSubCommandsKey") != blueprint.SubCommandsPath) return false;
+                if (Value(values, parent, "MultiSelectModel") != "Single") return false;
+                if (Value(values, parent, "NeverDefault") != "") return false;
+                if (Value(values, parent, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                if (values.Any(value => value.Key.Equals(parent, StringComparison.OrdinalIgnoreCase) && value.Name.Length == 0)) return false;
+                if (values.Any(value => value.Key.Equals(parent + @"\command", StringComparison.OrdinalIgnoreCase))) return false;
+                if (blueprint.SharesCommandTree)
+                {
+                    if (values.Count != 5) return false;
+                    continue;
+                }
+                if (Value(values, parent + @"\shell", ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                foreach (string format in blueprint.Formats)
+                {
+                    string verb = parent + @"\shell\" + format.ToLowerInvariant();
+                    if (Value(values, verb, "MUIVerb") != "Converti in " + format) return false;
+                    if (Value(values, verb, "MultiSelectModel") != "Single") return false;
+                    if (Value(values, verb, "NeverDefault") != "") return false;
+                    if (Value(values, verb, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                    if (!Value(values, verb, "Icon").EndsWith(ContextMenuNext.IconFileName(format), StringComparison.OrdinalIgnoreCase)) return false;
+                    if (Value(values, verb + @"\command", "") != "\"" + exe + "\" --convert-menu " + format + " --files \"%1\"") return false;
+                    if (Value(values, verb + @"\command", ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    static string Value(IReadOnlyList<RegistryValue> values, string key, string name) =>
+        values.Single(value => value.Key.Equals(key, StringComparison.OrdinalIgnoreCase) && value.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Data;
+
+    static void AddContentMenuInstallChecks(Dictionary<string, bool> checks)
+    {
+        var native = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        var pandoc = new ContextMenuCatalog.EngineSnapshot(true, false, false);
+        string photo = @"C:\Documenti\nota.pdf";
+        Check(checks, "content_install_native_43", () => ContentInstallNative(native));
+        Check(checks, "content_install_pandoc_59", () => ContentInstallPandoc(native, pandoc));
+        Check(checks, "content_yaml_yml_one_command_tree", () => ContentInstalledAlias(native, pandoc));
+        Check(checks, "content_install_repeat_no_duplicates", () => ContentInstallRepeat(native));
+        Check(checks, "content_remove_only_owned_keys", () => ContentRemoveOwnedOnly(native));
+        Check(checks, "content_foreign_owner_preserved", () => ContentForeignOwnerPreserved(native, pandoc));
+        Check(checks, "content_install_error_restores_absent_and_existing", () => ContentInstallErrorRestores(native));
+        Check(checks, "content_remove_error_restores_previous_state", () => ContentRemoveErrorRestores(native, pandoc));
+        Check(checks, "content_missing_icon_refuses_before_write", () => ContentMissingIconRefuses(native, pandoc));
+        Check(checks, "content_unauthorized_path_refused", () => ContentUnauthorizedPathRefused(native));
+        Check(checks, "content_cli_rejects_combinations", () => ContentCliRejectsCombinations(photo));
+        Check(checks, "content_protects_existing_flip_menus", () => ContentProtectsExistingMenus(native, pandoc));
+        Check(checks, "content_ipc_mutex_pipe_unchanged", () => ContentIpcUnchanged(photo));
+    }
+
+    static int RunContentCommand(string[] args, string exe, IRegistryStore store, ContextMenuCatalog.EngineSnapshot engines, out string error)
+    {
+        var buffer = new StringWriter();
+        int code = ContextMenuNext.ApplyContent(args, exe, store, engines, buffer);
+        error = buffer.ToString();
+        return code;
+    }
+
+    static bool ContentMenusMatch(MemoryRegistryStore store, string exe, ContextMenuCatalog.EngineSnapshot engines, int expectedDestinations, int foreignKeys)
+    {
+        var blueprints = ContextMenuNext.PlanContentMenus(engines);
+        if (blueprints.Length != 7 || blueprints.Sum(plan => plan.Formats.Count) != expectedDestinations) return false;
+        int commands = 0;
+        var commandKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var blueprint in blueprints)
+        {
+            if (store.Read(blueprint.ParentKey, "MUIVerb") != "Converti con Flip") return false;
+            if (store.Read(blueprint.ParentKey, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            if (store.Read(blueprint.ParentKey, "") != null) return false;
+            if (store.KeyExists(blueprint.ParentKey + @"\command")) return false;
+            if (store.Read(blueprint.ParentKey, "ExtendedSubCommandsKey") != blueprint.SubCommandsPath) return false;
+            if (store.Read(blueprint.ParentKey, "MultiSelectModel") != "Single") return false;
+            if (store.Read(blueprint.ParentKey, "NeverDefault") != "") return false;
+            if (blueprint.SharesCommandTree)
+            {
+                if (store.KeyExists(blueprint.ParentKey + @"\shell")) return false;
+                continue;
+            }
+            if (store.Read(blueprint.ParentKey + @"\shell", ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            string[] policy = Wheel.OrderFormats(Policy.Outputs(["flip.context" + blueprint.Extension], engines.Pandoc, engines.Office, engines.Ffmpeg));
+            if (!blueprint.Formats.SequenceEqual(policy)) return false;
+            foreach (string format in blueprint.Formats)
+            {
+                string verb = blueprint.ParentKey + @"\shell\" + format.ToLowerInvariant();
+                string commandKey = verb + @"\command";
+                if (!commandKeys.Add(commandKey)) return false;
+                if (store.Read(commandKey, "") != "\"" + Path.GetFullPath(exe) + "\" --convert-menu " + format + " --files \"%1\"") return false;
+                if (store.Read(commandKey, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                string icon = store.Read(verb, "Icon") ?? "";
+                if (!icon.EndsWith(ContextMenuNext.IconFileName(format), StringComparison.OrdinalIgnoreCase)) return false;
+                if (!icon.EndsWith("-premium-v2.ico", StringComparison.OrdinalIgnoreCase)) return false;
+                if (store.Read(verb, "MUIVerb") != "Converti in " + format) return false;
+                if (store.Read(verb, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                if (!MenuConversion.TryParse(["--convert-menu", format, "--files", @"C:\Documenti\nota.pdf"], out var request, out _)) return false;
+                if (request.Format != format || request.File != @"C:\Documenti\nota.pdf") return false;
+                commands++;
+            }
+        }
+        var yaml = blueprints.Single(plan => plan.Extension == ".yaml");
+        var yml = blueprints.Single(plan => plan.Extension == ".yml");
+        int expectedCommands = blueprints.Where(plan => !plan.SharesCommandTree).Sum(plan => plan.Formats.Count);
+        int expectedKeys = blueprints.Sum(plan => ContextMenuNext.PlannedContentKeys(plan).Count);
+        return !yaml.SharesCommandTree
+            && yml.SharesCommandTree
+            && yaml.Formats.SequenceEqual(yml.Formats)
+            && store.Read(yml.ParentKey, "ExtendedSubCommandsKey") == yaml.SubCommandsPath
+            && !store.KeyExists(yml.ParentKey + @"\shell")
+            && commands == expectedCommands
+            && expectedDestinations == expectedCommands + yml.Formats.Count
+            && store.KeyCount == expectedKeys + foreignKeys;
+    }
+
+    static bool ContentBlueprintInstalled(MemoryRegistryStore store, string exe, ContentMenuBlueprint blueprint)
+    {
+        if (store.KeyCount != ContextMenuNext.PlannedContentKeys(blueprint).Count) return false;
+        if (store.Read(blueprint.ParentKey, "MUIVerb") != "Converti con Flip") return false;
+        if (store.Read(blueprint.ParentKey, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+        if (store.Read(blueprint.ParentKey, "") != null) return false;
+        if (store.KeyExists(blueprint.ParentKey + @"\command")) return false;
+        if (blueprint.SharesCommandTree) return !store.KeyExists(blueprint.ParentKey + @"\shell");
+        foreach (string format in blueprint.Formats)
+        {
+            string verb = blueprint.ParentKey + @"\shell\" + format.ToLowerInvariant();
+            if (store.Read(verb + @"\command", "") != "\"" + Path.GetFullPath(exe) + "\" --convert-menu " + format + " --files \"%1\"") return false;
+            if (store.Read(verb, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            if (store.Read(verb + @"\command", ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+        }
+        return true;
+    }
+
+    static bool ContentInstallNative(ContextMenuCatalog.EngineSnapshot native)
+    {
+        string directory = ImageLab("content-native");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            var store = new MemoryRegistryStore();
+            int code = RunContentCommand([ContextMenuNext.InstallContentCommand], exe, store, native, out string error);
+            if (code != 0 || error.Length != 0 || !ContentMenusMatch(store, exe, native, 43, 0)) return false;
+            var office = new MemoryRegistryStore();
+            ContextMenuNext.InstallContentMenus(exe, new ContextMenuCatalog.EngineSnapshot(false, true, true), office);
+            return office.Export() == store.Export();
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentInstallPandoc(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string directory = ImageLab("content-pandoc");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            var nativeStore = new MemoryRegistryStore();
+            ContextMenuNext.InstallContentMenus(exe, native, nativeStore);
+            var store = new MemoryRegistryStore();
+            int code = RunContentCommand([ContextMenuNext.InstallContentCommand], exe, store, pandoc, out string error);
+            if (code != 0 || error.Length != 0 || !ContentMenusMatch(store, exe, pandoc, 59, 0)) return false;
+            if (store.KeyCount <= nativeStore.KeyCount) return false;
+            var office = new MemoryRegistryStore();
+            ContextMenuNext.InstallContentMenus(exe, new ContextMenuCatalog.EngineSnapshot(true, true, true), office);
+            int nativeCommands = ContextMenuNext.PlanContentMenus(native).Where(plan => !plan.SharesCommandTree).Sum(plan => plan.Formats.Count);
+            int pandocCommands = ContextMenuNext.PlanContentMenus(pandoc).Where(plan => !plan.SharesCommandTree).Sum(plan => plan.Formats.Count);
+            return office.Export() == store.Export() && nativeCommands == 36 && pandocCommands == 52;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentInstalledAlias(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string directory = ImageLab("content-alias");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            foreach (var engines in new[] { native, pandoc })
+            {
+                var store = new MemoryRegistryStore();
+                ContextMenuNext.InstallContentMenus(exe, engines, store);
+                var plans = ContextMenuNext.PlanContentMenus(engines);
+                var yaml = plans.Single(plan => plan.Extension == ".yaml");
+                var yml = plans.Single(plan => plan.Extension == ".yml");
+                if (store.Read(yml.ParentKey, "ExtendedSubCommandsKey") != yaml.SubCommandsPath) return false;
+                if (store.Read(yaml.ParentKey, "ExtendedSubCommandsKey") != yaml.SubCommandsPath) return false;
+                if (store.KeyExists(yml.ParentKey + @"\shell") || store.KeyExists(yml.ParentKey + @"\command")) return false;
+                int yamlCommands = 0;
+                foreach (string format in yaml.Formats)
+                {
+                    string yamlCommand = yaml.ParentKey + @"\shell\" + format.ToLowerInvariant() + @"\command";
+                    string ymlCommand = yml.ParentKey + @"\shell\" + format.ToLowerInvariant() + @"\command";
+                    if (!store.KeyExists(yamlCommand) || store.KeyExists(ymlCommand)) return false;
+                    if (store.Read(yamlCommand, "") != "\"" + exe + "\" --convert-menu " + format + " --files \"%1\"") return false;
+                    yamlCommands++;
+                }
+                int treeKeys = ContextMenuNext.PlannedContentKeys(yaml).Count;
+                if (yamlCommands != yaml.Formats.Count || ContextMenuNext.PlannedContentKeys(yml).Count != 1) return false;
+                if (store.KeyCount != plans.Sum(plan => ContextMenuNext.PlannedContentKeys(plan).Count)) return false;
+                if (treeKeys != 2 + yaml.Formats.Count * 2) return false;
+            }
+            return true;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentInstallRepeat(ContextMenuCatalog.EngineSnapshot native)
+    {
+        string directory = ImageLab("content-repeat");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            var store = new MemoryRegistryStore();
+            ContextMenuNext.InstallContentMenus(exe, native, store);
+            string once = store.Export();
+            int count = store.KeyCount;
+            int again = RunContentCommand(
+                [ContextMenuNext.InstallContentCommand, ContextMenuNext.InstallContentCommand],
+                exe, store, native, out string error);
+            if (again != 0 || error.Length != 0 || store.Export() != once || store.KeyCount != count) return false;
+            var pdf = ContextMenuNext.PlanContentMenus(native).Single(plan => plan.Extension == ".pdf");
+            string command = pdf.ParentKey + @"\shell\" + pdf.Formats[0].ToLowerInvariant() + @"\command";
+            store.DeleteKey(command);
+            if (store.KeyCount != count - 1) return false;
+            ContextMenuNext.InstallContentMenus(exe, native, store);
+            return store.Export() == once && store.KeyCount == count;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentRemoveOwnedOnly(ContextMenuCatalog.EngineSnapshot native)
+    {
+        string directory = ImageLab("content-remove");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            var store = new MemoryRegistryStore();
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+            ContextMenuNext.InstallContentMenus(exe, native, store);
+            var pdf = ContextMenuNext.PlanContentMenus(native).Single(plan => plan.Extension == ".pdf");
+            string decoy = pdf.ParentKey + @"\shell\custom";
+            store.Write(decoy, "MUIVerb", "Esterno");
+            store.Write(decoy, ContextMenuNext.OwnerValue, "Altro");
+            string csv = ContextMenuNext.ContentParentKeyFor(".csv");
+            store.Write(csv, ContextMenuNext.OwnerValue, "AltroProgramma");
+            store.Write(csv, "MUIVerb", "Non toccare");
+            int removed = RunContentCommand([ContextMenuNext.RemoveContentCommand], exe, store, native, out string error);
+            int removedAgain = RunContentCommand([ContextMenuNext.RemoveContentCommand], exe, store, native, out string againError);
+            bool kept = removed == 0 && error.Length == 0
+                && removedAgain == 0 && againError.Length == 0
+                && store.KeyExists(pdf.ParentKey)
+                && store.KeyExists(decoy)
+                && store.Read(decoy, "MUIVerb") == "Esterno"
+                && store.Read(csv, ContextMenuNext.OwnerValue) == "AltroProgramma"
+                && store.Read(csv, "MUIVerb") == "Non toccare"
+                && store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && store.Read(ContextMenuPreview.OriginalMenuKey + @"\command", "") == "\"C:\\Flip\\Flip.exe\" --files \"%1\""
+                && !store.KeyExists(ContextMenuNext.ContentParentKeyFor(".txt"))
+                && !store.KeyExists(ContextMenuNext.ContentParentKeyFor(".json"))
+                && !store.KeyExists(ContextMenuNext.ContentParentKeyFor(".yaml"))
+                && !store.KeyExists(ContextMenuNext.ContentParentKeyFor(".yml"))
+                && !store.KeyExists(ContextMenuNext.ContentParentKeyFor(".xml"));
+            string stable = store.Export();
+            ContextMenuNext.RemoveContentMenus(exe, store);
+            if (store.Export() != stable) return false;
+            var clean = new MemoryRegistryStore();
+            ContextMenuNext.InstallContentMenus(exe, native, clean);
+            int installed = clean.KeyCount;
+            ContextMenuNext.RemoveContentMenus(clean);
+            ContextMenuNext.RemoveContentMenus(clean);
+            return kept && installed > 0 && clean.KeyCount == 0;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentForeignOwnerPreserved(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string directory = ImageLab("content-foreign");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            foreach (var engines in new[] { native, pandoc })
+            {
+                var alias = new MemoryRegistryStore();
+                string yml = ContextMenuNext.ContentParentKeyFor(".yml");
+                alias.Write(yml, ContextMenuNext.OwnerValue, "Altro");
+                alias.Write(yml, "MUIVerb", "Non toccare");
+                if (!ContentInstallLeavesStore(exe, engines, alias)) return false;
+                var command = new MemoryRegistryStore();
+                string verb = ContextMenuNext.ContentParentKeyFor(".xml") + @"\shell\txt\command";
+                command.Write(verb, "", "notepad.exe \"%1\"");
+                if (!ContentInstallLeavesStore(exe, engines, command)) return false;
+            }
+            return true;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentInstallLeavesStore(string exe, ContextMenuCatalog.EngineSnapshot engines, MemoryRegistryStore store)
+    {
+        string before = store.Export();
+        try { ContextMenuNext.InstallContentMenus(exe, engines, store); return false; }
+        catch (IOException ex)
+        {
+            return ex.Message.Contains("preservata", StringComparison.Ordinal)
+                && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase)
+                && store.Export() == before;
+        }
+    }
+
+    static bool ContentInstallErrorRestores(ContextMenuCatalog.EngineSnapshot native)
+    {
+        string directory = ImageLab("content-write");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            string pdf = ContextMenuNext.ContentParentKeyFor(".pdf");
+            string txt = ContextMenuNext.ContentParentKeyFor(".txt");
+            string yamlShell = ContextMenuNext.ContentParentKeyFor(".yaml") + @"\shell";
+            Exception[] failures =
+            [
+                new IOException("errore simulato"),
+                new UnauthorizedAccessException("errore simulato"),
+                new SecurityException("errore simulato"),
+                new InvalidOperationException("errore simulato")
+            ];
+            foreach (var failure in failures)
+            {
+                var absent = new MemoryRegistryStore();
+                absent.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+                string beforeAbsent = absent.Export();
+                var fail = new FailAfterWriteStore(absent) { FailOn = 4, Failure = failure };
+                bool threw = false;
+                try { ContextMenuNext.InstallContentMenus(exe, native, fail); }
+                catch (Exception ex) when (ex.GetType() == failure.GetType())
+                {
+                    threw = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                        && !ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                        && !ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                        && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+                }
+                if (!threw || absent.Export() != beforeAbsent) return false;
+                if (absent.KeyExists(pdf) || absent.KeyExists(txt) || absent.KeyExists(yamlShell)) return false;
+                if (absent.Read(ContextMenuPreview.OriginalMenuKey, "") != "Converti con Flip") return false;
+            }
+
+            var pdfPlan = ContextMenuNext.PlanContentMenus(native).Single(plan => plan.Extension == ".pdf");
+            var existing = new MemoryRegistryStore();
+            existing.Write(pdf, "MUIVerb", "Personalizzato");
+            existing.Write(pdf, "ExtendedSubCommandsKey", pdfPlan.SubCommandsPath);
+            existing.Write(pdf, "MultiSelectModel", "Single");
+            existing.Write(pdf, "NeverDefault", "");
+            existing.Write(pdf, ContextMenuNext.OwnerValue, pdfPlan.MenuId);
+            existing.Write(pdf, "Nota", "tenere");
+            existing.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            if (existing.KeyExists(pdf + @"\shell") || existing.KeyExists(txt)) return false;
+            string beforeExisting = existing.Export();
+            var interrupted = new FailAfterWriteStore(existing) { FailOn = 12 };
+            bool interruptedThrow = false;
+            try { ContextMenuNext.InstallContentMenus(exe, native, interrupted); }
+            catch (IOException ex)
+            {
+                interruptedThrow = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+            }
+            if (!interruptedThrow || existing.Export() != beforeExisting) return false;
+            if (existing.KeyExists(pdf + @"\shell") || existing.KeyExists(txt) || existing.KeyExists(yamlShell)) return false;
+            if (existing.Read(pdf, "MUIVerb") != "Personalizzato" || existing.Read(pdf, "Nota") != "tenere") return false;
+
+            var partial = new MemoryRegistryStore();
+            partial.Write(pdf, "MUIVerb", "Personalizzato");
+            partial.Write(pdf, "ExtendedSubCommandsKey", pdfPlan.SubCommandsPath);
+            partial.Write(pdf, "MultiSelectModel", "Single");
+            partial.Write(pdf, "NeverDefault", "");
+            partial.Write(pdf, ContextMenuNext.OwnerValue, pdfPlan.MenuId);
+            partial.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            var corrupt = new FailAfterWriteStore(partial) { FailOn = 12, CorruptRestoreWrites = true };
+            bool partialSignaled = false;
+            try { ContextMenuNext.InstallContentMenus(exe, native, corrupt); }
+            catch (IOException ex)
+            {
+                partialSignaled = ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                    && ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+            }
+            return partialSignaled
+                && partial.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && partial.Export().Contains("#parziale", StringComparison.Ordinal);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentRemoveErrorRestores(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string directory = ImageLab("content-remove-error");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            var pdfOnly = new MemoryRegistryStore();
+            var pdf = ContextMenuNext.PlanContentMenus(native).Single(plan => plan.Extension == ".pdf");
+            ContextMenuNext.RegisterContentMenu(pdf, exe, pdfOnly);
+            pdfOnly.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            string txt = ContextMenuNext.ContentParentKeyFor(".txt");
+            string extraFormat = ContextMenuNext.PlanContentMenus(pandoc).Single(plan => plan.Extension == ".pdf").Formats
+                .First(format => !pdf.Formats.Contains(format, StringComparer.Ordinal));
+            string extraKey = pdf.ParentKey + @"\shell\" + extraFormat.ToLowerInvariant();
+            if (pdfOnly.KeyExists(txt) || pdfOnly.KeyExists(extraKey)) return false;
+            string beforePdf = pdfOnly.Export();
+            var pdfFail = new FailAfterDeleteStore(pdfOnly) { FailOn = 1 };
+            bool pdfThrew = false;
+            try { ContextMenuNext.RemoveContentMenus(exe, pdfFail); }
+            catch (IOException ex)
+            {
+                pdfThrew = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+            }
+            if (!pdfThrew || pdfOnly.Export() != beforePdf) return false;
+            if (pdfOnly.KeyExists(txt) || pdfOnly.KeyExists(extraKey)) return false;
+            if (pdfOnly.Read(ContextMenuPreview.OriginalMenuKey, "") != "Converti con Flip") return false;
+            if (pdfOnly.Read(pdf.ParentKey, ContextMenuNext.OwnerValue) != pdf.MenuId) return false;
+
+            Exception[] failures =
+            [
+                new IOException("errore simulato"),
+                new UnauthorizedAccessException("errore simulato"),
+                new SecurityException("errore simulato")
+            ];
+            foreach (var failure in failures)
+            {
+                var installed = new MemoryRegistryStore();
+                ContextMenuNext.InstallContentMenus(exe, native, installed);
+                installed.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+                string before = installed.Export();
+                var interrupted = new FailAfterDeleteStore(installed) { FailOn = 1, Failure = failure };
+                bool threw = false;
+                try { ContextMenuNext.RemoveContentMenus(exe, interrupted); }
+                catch (Exception ex) when (ex.GetType() == failure.GetType())
+                {
+                    threw = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                        && !ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                        && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+                }
+                if (!threw || installed.Export() != before) return false;
+                if (installed.Read(ContextMenuPreview.OriginalMenuKey, "") != "Converti con Flip") return false;
+            }
+
+            var partial = new MemoryRegistryStore();
+            ContextMenuNext.InstallContentMenus(exe, pandoc, partial);
+            partial.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            var failedRestore = new FailAfterDeleteStore(partial) { FailOn = 1, FailRestore = true };
+            bool signaled = false;
+            try { ContextMenuNext.RemoveContentMenus(exe, failedRestore); }
+            catch (IOException ex)
+            {
+                signaled = ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                    && ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && ex.Message.Contains("ripristino simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase)
+                    && ex.InnerException is IOException;
+            }
+            return signaled && partial.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip";
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentMissingIconRefuses(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string missingTxt = ImageLab("content-missing-txt");
+        string missingDocx = ImageLab("content-missing-docx");
+        string corrupt = ImageLab("content-corrupt-yaml");
+        try
+        {
+            Directory.CreateDirectory(missingTxt);
+            Directory.CreateDirectory(missingDocx);
+            Directory.CreateDirectory(corrupt);
+            if (!CopyPremiumIconsSelective(missingTxt, "flip-menu-txt-premium-v2.ico")) return false;
+            if (!CopyPremiumIconsSelective(missingDocx, "flip-menu-docx-premium-v2.ico")) return false;
+            if (!CopyPremiumV2Icons(corrupt)) return false;
+            File.WriteAllBytes(Path.Combine(corrupt, "flip-menu-yaml-premium-v2.ico"), [1, 2, 3, 4]);
+            string txtExe = Path.GetFullPath(Path.Combine(missingTxt, "Flip.exe"));
+            string docxExe = Path.GetFullPath(Path.Combine(missingDocx, "Flip.exe"));
+            string corruptExe = Path.GetFullPath(Path.Combine(corrupt, "Flip.exe"));
+            if (ContextMenuNext.ContentIconsReady(txtExe, native) || ContextMenuNext.ContentIconsReady(docxExe, pandoc)) return false;
+            if (ContextMenuNext.ContentIconsReady(corruptExe, native)) return false;
+            var probes = new (string Exe, ContextMenuCatalog.EngineSnapshot Engines)[]
+            {
+                (txtExe, native),
+                (docxExe, pandoc),
+                (corruptExe, native),
+                (corruptExe, pandoc)
+            };
+            foreach (var probe in probes)
+            {
+                var touch = new TouchRegistry();
+                bool refused = false;
+                try { ContextMenuNext.InstallContentMenus(probe.Exe, probe.Engines, touch); }
+                catch (IOException ex) { refused = ex.Message.Contains("Icone non disponibili", StringComparison.Ordinal); }
+                if (!refused || touch.Calls != 0) return false;
+                var memory = new MemoryRegistryStore();
+                try { ContextMenuNext.InstallContentMenus(probe.Exe, probe.Engines, memory); }
+                catch (IOException) { }
+                if (memory.KeyCount != 0) return false;
+                int code = RunContentCommand([ContextMenuNext.InstallContentCommand], probe.Exe, touch, probe.Engines, out string error);
+                if (code == 0 || touch.Calls != 0 || !error.Contains("Icone non disponibili", StringComparison.Ordinal)) return false;
+                if (error.Contains("garantito", StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            var pandocPdf = ContextMenuNext.PlanContentMenus(pandoc).Single(plan => plan.Extension == ".pdf");
+            var single = new TouchRegistry();
+            bool singleRefused = false;
+            try { ContextMenuNext.RegisterContentMenu(pandocPdf, docxExe, single); }
+            catch (IOException ex) { singleRefused = ex.Message.Contains("Icone non disponibili", StringComparison.Ordinal); }
+            return singleRefused && single.Calls == 0;
+        }
+        finally
+        {
+            DeleteLab(missingTxt);
+            DeleteLab(missingDocx);
+            DeleteLab(corrupt);
+        }
+    }
+
+    static bool CopyPremiumIconsSelective(string directory, string omit)
+    {
+        foreach (string name in PremiumV2IconFiles)
+        {
+            if (name.Equals(omit, StringComparison.OrdinalIgnoreCase)) continue;
+            string source = Path.Combine(AppContext.BaseDirectory, name);
+            if (!File.Exists(source) || !ContextMenuPreview.IconIsValid(source)) return false;
+            File.Copy(source, Path.Combine(directory, name), true);
+        }
+        return true;
+    }
+
+    static bool ContentUnauthorizedPathRefused(ContextMenuCatalog.EngineSnapshot native)
+    {
+        string[] rejected =
+        [
+            @"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe",
+            @"C:\dev\FLIP\src\Flip\obj\Release\net10.0-windows\Flip.exe",
+            Path.Combine(Path.GetTempPath(), "Flip.exe"),
+            @"C:\Programmi Flip\Flip.exe",
+            Path.Combine(Path.GetTempPath(), "Flip-Lab", "Flip.dll"),
+            ""
+        ];
+        var store = new TouchRegistry();
+        foreach (string path in rejected)
+        {
+            int install = RunContentCommand([ContextMenuNext.InstallContentCommand], path, store, native, out string installError);
+            int remove = RunContentCommand([ContextMenuNext.RemoveContentCommand], path, store, native, out string removeError);
+            if (install == 0 || remove == 0 || store.Calls != 0) return false;
+            if (installError.Length == 0 || removeError.Length == 0) return false;
+            if (installError.Contains("garantito", StringComparison.OrdinalIgnoreCase)) return false;
+            bool installThrew = false;
+            bool removeThrew = false;
+            try { ContextMenuNext.InstallContentMenus(path, native, store); }
+            catch (IOException) { installThrew = true; }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or InvalidOperationException or ArgumentException) { installThrew = true; }
+            try { ContextMenuNext.RemoveContentMenus(path, store); }
+            catch (IOException) { removeThrew = true; }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or InvalidOperationException or ArgumentException) { removeThrew = true; }
+            if (!installThrew || !removeThrew || store.Calls != 0) return false;
+        }
+        return true;
+    }
+
+    static bool ContentCliRejectsCombinations(string photo)
+    {
+        var engines = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        string[] extras =
+        [
+            "--install-context-menu-images", "--remove-context-menu-images",
+            "--install-context-menu-png", "--remove-context-menu-png",
+            "--install-context-menu-preview", "--remove-context-menu-preview",
+            "--install-context-menu", "--remove-context-menu",
+            "--convert-menu", "--convert", "--test-input", "--files", photo
+        ];
+        var store = new TouchRegistry();
+        int both = RunContentCommand(
+            [ContextMenuNext.InstallContentCommand, ContextMenuNext.RemoveContentCommand],
+            @"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe",
+            store, engines, out string bothError);
+        if (both == 0 || store.Calls != 0 || !bothError.Contains("Nessuna modifica al Registro", StringComparison.Ordinal)) return false;
+        foreach (string extra in extras)
+        {
+            int install = RunContentCommand([ContextMenuNext.InstallContentCommand, extra], @"C:\Programmi Flip\Flip.exe", store, engines, out string installError);
+            int remove = RunContentCommand([extra, ContextMenuNext.RemoveContentCommand], @"C:\Programmi Flip\Flip.exe", store, engines, out string removeError);
+            if (install == 0 || remove == 0 || store.Calls != 0) return false;
+            if (!installError.Contains(extra, StringComparison.Ordinal) || !installError.Contains("Nessuna modifica al Registro", StringComparison.Ordinal)) return false;
+            if (!removeError.Contains(extra, StringComparison.Ordinal) || removeError.Contains("garantito", StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        var imageStore = new TouchRegistry();
+        int imageBlocked = ContextMenuNext.ApplyImages(
+            [ContextMenuNext.InstallImagesCommand, ContextMenuNext.InstallContentCommand],
+            @"C:\Programmi Flip\Flip.exe",
+            imageStore,
+            engines,
+            new StringWriter());
+        return imageBlocked != 0
+            && imageStore.Calls == 0
+            && store.Calls == 0
+            && ContextMenuNext.IsContentMenuCommand([ContextMenuNext.InstallContentCommand])
+            && ContextMenuNext.IsContentMenuCommand([ContextMenuNext.RemoveContentCommand])
+            && !ContextMenuNext.IsContentMenuCommand([ContextMenuNext.InstallImagesCommand])
+            && !ContextMenuNext.IsContentMenuCommand(["--install-context-menu-png"])
+            && !ContextMenuNext.IsContentMenuCommand(["--convert-menu", "PDF", "--files", photo])
+            && !ContextMenuNext.IsImageMenuCommand([ContextMenuNext.InstallContentCommand])
+            && !ContextMenuNext.IsPlannedCommand([ContextMenuNext.RemoveContentCommand])
+            && !ContextMenuPreview.IsPreviewCommand([ContextMenuNext.InstallContentCommand])
+            && !Program.OpensWheelOnStartup([ContextMenuNext.InstallContentCommand])
+            && !Program.OpensPanelOnStartup([ContextMenuNext.RemoveContentCommand])
+            && !Program.OpensWheelOnStartup([ContextMenuNext.InstallContentCommand, "--files", photo])
+            && !Program.OpensPanelOnStartup([ContextMenuNext.RemoveContentCommand, "--multi", "--files", photo])
+            && !Program.OpensWheelOnStartup(["--convert-menu", "PDF", "--files", photo])
+            && !Program.OpensPanelOnStartup(["--convert-menu", "TXT", "--multi", "--files", photo])
+            && Program.OpensWheelOnStartup(["--files", photo])
+            && Program.OpensPanelOnStartup(["--multi", "--files", photo]);
+    }
+
+    static bool ContentProtectsExistingMenus(ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        string directory = ImageLab("content-protect");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            if (!CopyPremiumV2Icons(directory)) return false;
+            string exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+            foreach (var engines in new[] { native, pandoc })
+            {
+                var store = new MemoryRegistryStore();
+                ContextMenuNext.InstallImageMenus(exe, native, store);
+                ContextMenuPreview.Install(PreviewPlan(native, exe), store);
+                store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+                store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+                string before = store.Export();
+                int protectedKeys = store.KeyCount;
+                ContextMenuNext.InstallContentMenus(exe, engines, store);
+                if (store.KeyCount <= protectedKeys) return false;
+                if (store.Read(ContextMenuNext.ParentKey, ContextMenuNext.OwnerValue) != ContextMenuNext.MenuId) return false;
+                if (store.Read(ContextMenuNext.ParentKeyFor(".jpg"), ContextMenuNext.OwnerValue) != ContextMenuNext.MenuIdFor(".jpg")) return false;
+                if (store.Read(ContextMenuNext.ParentKeyFor(".jpeg"), "ExtendedSubCommandsKey") != ContextMenuNext.SubCommandsPathFor(".jpg")) return false;
+                if (store.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) != ContextMenuPreview.PrototypeId) return false;
+                if (store.Read(ContextMenuPreview.ParentKey, "MUIVerb") != ContextMenuPreview.ParentVerb) return false;
+                if (store.Read(ContextMenuPreview.OriginalMenuKey, "") != "Converti con Flip") return false;
+                if (store.Read(ContextMenuPreview.OriginalMenuKey + @"\command", "") != "\"C:\\Flip\\Flip.exe\" --files \"%1\"") return false;
+                ContextMenuNext.RemoveContentMenus(exe, store);
+                ContextMenuNext.RemoveContentMenus(exe, store);
+                if (store.Export() != before) return false;
+                if (store.KeyExists(ContextMenuNext.ContentParentKeyFor(".pdf"))) return false;
+                if (store.KeyExists(ContextMenuNext.ContentParentKeyFor(".yml"))) return false;
+            }
+            return true;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool ContentIpcUnchanged(string photo)
+    {
+        string wire = MenuConversion.Serialize(new MenuConversion.Request("PDF", photo));
+        return Program.PipeName == "Flip.Local.Flip.v2"
+            && Program.DesktopMutexName == "Local\\Flip.Desktop.v2"
+            && MenuConversion.MenuPipeName == Program.PipeName + ".menu"
+            && MenuConversion.MenuPipeName == "Flip.Local.Flip.v2.menu"
+            && Ipc.Classify(null) == Ipc.Kind.None
+            && Ipc.Classify("exit") == Ipc.Kind.Exit
+            && Ipc.Classify("sound-test") == Ipc.Kind.SoundTest
+            && Ipc.Classify("settings") == Ipc.Kind.Settings
+            && Ipc.Classify("trigger:OEM102") == Ipc.Kind.Trigger
+            && Ipc.TriggerValue("trigger:OEM102") == "OEM102"
+            && Ipc.Classify("select") == Ipc.Kind.Select
+            && Ipc.Classify("multi:[]") == Ipc.Kind.Multi
+            && Ipc.MultiValue("multi:[]") == "[]"
+            && Ipc.Classify(wire) == Ipc.Kind.Files
+            && MenuConversion.TryDeserialize(wire, out var request, out _)
+            && request.Format == "PDF"
+            && request.File == photo
+            && !Program.PipeName.Contains("pdf-text-data", StringComparison.OrdinalIgnoreCase)
+            && !Program.DesktopMutexName.Contains("pdf-text-data", StringComparison.OrdinalIgnoreCase)
+            && !MenuConversion.MenuPipeName.Contains("pdf-text-data", StringComparison.OrdinalIgnoreCase);
     }
 
     sealed class TouchRegistry : IRegistryStore
