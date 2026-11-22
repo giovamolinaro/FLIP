@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Not yet released. Development branch `sviluppo-personalizzato` at `e6cfcf049277a30f93f8842a5f5769f0af01d697`. This work is on FLIP and is distinct from the public 0.5.1 package. The software, repository, CLI, and implemented context menus remain FLIP. FLIX is the planned name of the finished architecture and is not available.
+
+Unreleased is the `sviluppo-personalizzato` line of this fork. Its documented historical base is FLIP 0.5.1. Upstream AURA releases v0.6.0 and v0.6.1 are not releases of this fork and not FLIX. See [Publication status](docs/PUBLICATION-STATUS.md).
+
+- M4 (`8c4b758`): Add a central progress window for conversions started from context menus.
+- M5.1 (`b0bb71e`): Add the initial PNG context-menu path.
+- M5.2 (`61c2666`): Add context menus for the image formats, with dedicated tests and protections.
+- M5.3 (`2a44518`): Add PDF, TXT, and data context menus, with dedicated registration and tests.
+- M5.4 (`e6cfcf0`): Add audio and video context menus: 8 audio extensions, 7 video extensions, 15 menus in total, and 86 destination commands. Installation depends on a detected local FFmpeg. Destination entries use premium icons. Registry writes use FlipOwner checks and best-effort backup/rollback. Add the dedicated test suite and conversion matrix.
+- Isolated real testing of M5.4 (M5.4.6) in the FlipLab Windows account passed in the recorded perimeter: installation of 15 menus; registration of 86 destination commands; WAV and MP4 menus shown; conversions MP4 → MKV, MP4 → MP3, and WAV → MP3; source integrity; output validation and decode; menu removal; absence of the 15 keys after removal; post-removal visual check. That run did not exercise all 86 conversions by hand.
+
+Still open on this branch, and not introduced here: M5.5 document context menus; M5.6 overall functional testing; M6 legacy removal; M7 Setup Manager; a later global icon revision.
+
 ## 0.5.1
 
 - Fix `Install.ps1` when run directly from the extracted ZIP. After installing the .NET 10 Windows Desktop Runtime x64, extract the entire ZIP, double-click `Install-FLIP.cmd`, then start FLIP from the Desktop or Start menu shortcut.

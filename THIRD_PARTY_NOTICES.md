@@ -2,6 +2,8 @@
 
 Flip source code, icon, interface and procedurally generated wheel sound are MIT licensed. This license does not replace third-party licenses.
 
+That MIT statement is the text of this fork's [LICENSE](LICENSE). It does not describe upstream AURA releases from v0.6.0. [docs/PUBLICATION-STATUS.md](docs/PUBLICATION-STATUS.md) records that their LICENSE file states GPL-3.0-only. This notice does not import AURA components. FFmpeg is an optional program supplied on the machine. This notice does not assign it a version or a license.
+
 | Component | Pinned version | License / upstream |
 |---|---|---|
 | PDFtoImage | 5.4.0 | MIT, https://github.com/sungaila/PDFtoImage |

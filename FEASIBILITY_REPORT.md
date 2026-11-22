@@ -1,4 +1,6 @@
 # Interaction feasibility
+Historical record of the original radial drop target. It is not the approved FLIX interface. FLIX is planned, not released, and uses context menus. The wheel described below is still in the branch as legacy code. Observations, decisions and the recommendation are kept as recorded.
+
 Flip independently implements a Windows radial drop target using C#/.NET 10/WPF, Raw Input and OLE IDataObject. It does not inject code into Explorer, install hooks, or change Windows components.
 
 A wheel opening before OLE DragEnter is only a candidate: mouse/keyboard activity does not prove that a file drag exists. The payload is accepted and validated by the drop target later. Only Copy is returned; Move-only payloads are rejected.

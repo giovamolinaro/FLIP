@@ -4,9 +4,11 @@ FLIP is a Windows x64 beta. Windows 11 is the initial acceptance target; a clean
 
 ## Prebuilt release
 
-Download the Windows x64 ZIP from [Releases](https://github.com/thetinyfoundry/FLIP/releases), extract it and double-click `Install-FLIP.cmd`. Read the included `README.txt` for prerequisites and optional document engines. No compiler or SDK is needed for the packaged app.
+These instructions install the historical **FLIP 0.5.1** package of this lineage. They do not install later upstream AURA releases. The generic [Releases](https://github.com/thetinyfoundry/FLIP/releases) page also lists later versions, including v0.6.1 AURA Edition; those are not this package. See [publication status](PUBLICATION-STATUS.md).
 
-Download the `Flip-*-win-x64.zip` asset from GitHub Releases, extract it, and run `Install-Release.ps1`. The script installs the bundled app into `%LOCALAPPDATA%\Programs\Flip`, verifies copied files, creates Desktop/Start Menu shortcuts and enables per-user startup. It does not require the .NET SDK or administrator rights; the .NET 10 Windows Desktop Runtime x64 is required.
+Download the Windows x64 ZIP `Flip-0.5.1-win-x64.zip` from the [v0.5.1 release](https://github.com/thetinyfoundry/FLIP/releases/tag/v0.5.1), extract it and double-click `Install-FLIP.cmd`. Read the included `README.txt` for prerequisites and optional document engines. No compiler or SDK is needed for the packaged app.
+
+Download the `Flip-0.5.1-win-x64.zip` asset from the [v0.5.1 release](https://github.com/thetinyfoundry/FLIP/releases/tag/v0.5.1), extract it, and run `Install-Release.ps1`. The script installs the bundled app into `%LOCALAPPDATA%\Programs\Flip`, verifies copied files, creates Desktop/Start Menu shortcuts and enables per-user startup. It does not require the .NET SDK or administrator rights; the .NET 10 Windows Desktop Runtime x64 is required.
 
 ## From a source download
 
@@ -43,7 +45,7 @@ Startup is enabled by default by the installer and can be disabled through **Avv
 
 ## Package requirements and validation
 
-End users can download the versioned Windows x64 package from GitHub Releases. It includes component notices and checksums. The current build is framework-dependent and needs **.NET Desktop Runtime 10 x64**, not only the base .NET runtime. It is unsigned. Broader native drag/drop, listening, mixed-DPI and clean-Windows coverage remain testing limits, described in the release notes and [publication status](PUBLICATION-STATUS.md).
+End users can download the versioned Windows x64 package `Flip-0.5.1-win-x64.zip` from the [v0.5.1 release](https://github.com/thetinyfoundry/FLIP/releases/tag/v0.5.1). It includes component notices and checksums. The current build is framework-dependent and needs **.NET Desktop Runtime 10 x64**, not only the base .NET runtime. It is unsigned. Broader native drag/drop, listening, mixed-DPI and clean-Windows coverage remain testing limits, described in the release notes and [publication status](PUBLICATION-STATUS.md).
 
 A self-contained build could remove that runtime prerequisite at the cost of a larger download and runtime servicing responsibility. Start with a portable ZIP plus this per-user installer; defer MSI/MSIX until the installation contract is accepted. Publish checksums alongside the package. A checksum proves integrity against a trusted published value; it is not code signing.
 

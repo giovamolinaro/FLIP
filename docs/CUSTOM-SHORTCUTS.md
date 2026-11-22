@@ -1,5 +1,7 @@
 # Custom shortcuts and installation defaults
 
+Historical record of the wheel shortcut on candidate 0.4.0-beta.3, 23 October 2026. The counts and observations below stay as recorded. They describe the legacy wheel and its gestures, still present on the development branch. They are not the FLIX interface. FLIX is planned and not released. Removing this path is M6, which has not started. This file defines no new shortcut.
+
 Current candidate: 0.4.0-beta.3, 23 October 2026. This update supersedes the fixed ISO-key choice in the earlier audit.
 
 Right-click Flip's notification-area icon → **Impostazioni…**. Choose an arrow, Space, the ISO `<>` key, or use **Scegli un altro tasto…** to record a supported single key. Save applies it immediately and persists it atomically. Cancel leaves the previous choice. Down Arrow is the default for new profiles; existing supported choices are preserved. Modifiers alone, Fn, Windows keys, Escape, Delete and other reserved system keys are rejected. Users can change or mute the wheel tick separately in the tray menu; the original sound was preserved.

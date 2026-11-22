@@ -1,6 +1,8 @@
 # README demonstration
 
-The repository includes the supplied recording at [docs/assets/flip-demo.mp4](assets/flip-demo.mp4). It is a 38-second H.264/AAC vertical capture at 428×838, suitable as an early product demonstration. Before using it as the final promotional video, review the whole clip and confirm that no personal paths, notifications or unrelated windows are visible. The existing wheel PNG is a rendered UI preview, not evidence of physical drag/drop.
+Historical demonstration of the FLIP conversion wheel. The supplied recording is not a demonstration of FLIX and not a demonstration of the M5 context menus. A video of FLIX comes after the related milestones. The steps below are not new acceptance evidence.
+
+The repository includes the supplied recording at [docs/assets/flip-demo.mp4](assets/flip-demo.mp4). It is a 38-second H.264/AAC vertical capture at 428×838, suitable as an early demonstration of the wheel. Before using it as a promotional video of that wheel, review the whole clip and confirm that no personal paths, notifications or unrelated windows are visible. The existing wheel PNG is a rendered UI preview, not evidence of physical drag/drop.
 
 Use an otherwise empty Explorer folder with a synthetic `sample.png`. Show file extensions. Keep names and paths anonymous in the final crop; hide notifications. Confirm the selected shortcut in Settings before capture; use Down Arrow for the default demonstration.
 
