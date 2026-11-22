@@ -43,5 +43,16 @@
     <Content Include="flip-menu-rtf-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="flip-menu-fb2-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="flip-menu-rst-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-mp3-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-wav-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-flac-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-ogg-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-m4a-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-aac-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-mp4-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-mkv-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-webm-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-avi-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flip-menu-mov-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

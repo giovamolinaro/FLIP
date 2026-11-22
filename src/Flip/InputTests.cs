@@ -11,6 +11,8 @@ internal static class InputTests
             return ImageMatrixTests.Run();
         if (Environment.GetCommandLineArgs().Any(arg => arg.Equals("--content-matrix-only", StringComparison.Ordinal)))
             return ContentMatrixTests.Run();
+        if (Environment.GetCommandLineArgs().Any(arg => arg.Equals("--media-matrix-only", StringComparison.Ordinal)))
+            return MediaMatrixTests.Run();
         var shortcut = WheelShortcut.Parse("OEM102");
         var checks = new Dictionary<string, bool>
         {
@@ -191,6 +193,8 @@ internal static class InputTests
         AddContextMenuNextChecks(checks);
         AddContentMenuBlueprintChecks(checks);
         AddContentMenuInstallChecks(checks);
+        AddMediaMenuBlueprintChecks(checks);
+        AddMediaMenuInstallChecks(checks);
         AddMenuProgressChecks(checks);
         File.WriteAllText(Path.Combine(Evidence.DirectoryPath, "input-tests.json"),
             JsonSerializer.Serialize(new { utc = DateTimeOffset.UtcNow, passed = checks.Count(c => c.Value), failed = checks.Count(c => !c.Value), checks }, new JsonSerializerOptions { WriteIndented = true }));
@@ -3267,6 +3271,946 @@ internal static class InputTests
             && !Program.PipeName.Contains("pdf-text-data", StringComparison.OrdinalIgnoreCase)
             && !Program.DesktopMutexName.Contains("pdf-text-data", StringComparison.OrdinalIgnoreCase)
             && !MenuConversion.MenuPipeName.Contains("pdf-text-data", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void AddMediaMenuBlueprintChecks(Dictionary<string, bool> checks)
+    {
+        var ffmpeg = new ContextMenuCatalog.EngineSnapshot(false, false, true);
+        var absent = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        string exe = @"C:\Programmi Flip\Flip.exe";
+        Check(checks, "media_fifteen_ids_and_extensions", () => MediaFifteenIds(ffmpeg));
+        Check(checks, "media_destinations_42_audio_44_video", () => MediaDestinationCounts(ffmpeg));
+        Check(checks, "media_no_alias_identity_or_forbidden", () => MediaNoAliasOrForbidden(ffmpeg));
+        Check(checks, "media_order_matches_catalog", () => MediaOrderMatchesCatalog());
+        Check(checks, "media_ffmpeg_absent_pandoc_office_invariant", () => MediaEngineIndependence(ffmpeg, absent));
+        Check(checks, "media_commands_owner_hkcu", () => MediaCommandsOwnerAndKeys(ffmpeg, exe));
+        Check(checks, "media_icons_do_not_block_blueprint", () => MediaIconsDoNotBlockBlueprint(ffmpeg));
+        Check(checks, "media_icons_ready_gate", () => MediaIconsReadyGate());
+        Check(checks, "media_no_collision_prior_blueprints", () => MediaLeavesPriorBlueprints(ffmpeg));
+    }
+
+    static bool MediaFifteenIds(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        string[] extensions =
+        [
+            ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus",
+            ".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv", ".m4v"
+        ];
+        string[] ids =
+        [
+            "Flip.Convert.Mp3", "Flip.Convert.Wav", "Flip.Convert.Flac", "Flip.Convert.Ogg",
+            "Flip.Convert.M4a", "Flip.Convert.Aac", "Flip.Convert.Wma", "Flip.Convert.Opus",
+            "Flip.Convert.Mp4", "Flip.Convert.Mkv", "Flip.Convert.Webm", "Flip.Convert.Avi",
+            "Flip.Convert.Mov", "Flip.Convert.Wmv", "Flip.Convert.M4v"
+        ];
+        if (!ContextMenuNext.MediaExtensions.SequenceEqual(extensions)) return false;
+        if (!Policy.Audio.Concat(Policy.Video).SequenceEqual(extensions)) return false;
+        if (!ContextMenuNext.MediaExtensions.Take(Policy.Audio.Length).SequenceEqual(Policy.Audio)) return false;
+        if (!ContextMenuNext.MediaExtensions.Skip(Policy.Audio.Length).SequenceEqual(Policy.Video)) return false;
+        var plans = ContextMenuNext.PlanMediaMenus(ffmpeg);
+        if (plans.Length != 15 || !plans.Select(plan => plan.Extension).SequenceEqual(extensions)) return false;
+        if (!plans.Select(plan => plan.MenuId).SequenceEqual(ids)) return false;
+        if (plans.Select(plan => plan.MenuId).Distinct(StringComparer.Ordinal).Count() != 15) return false;
+        if (plans.Any(plan => plan.SharesCommandTree || plan.CommandParentKey != plan.ParentKey)) return false;
+        foreach (var plan in plans)
+        {
+            if (plan.MenuId != ContextMenuNext.MediaMenuIdFor(plan.Extension)) return false;
+            if (plan.MenuId != ContextMenuNext.MediaMenuIdFor(plan.Extension.TrimStart('.').ToUpperInvariant())) return false;
+            if (plan.ParentKey != ContextMenuNext.MediaParentKeyFor(plan.Extension)) return false;
+            if (plan.SubCommandsPath != ContextMenuNext.MediaSubCommandsPathFor(plan.Extension)) return false;
+        }
+        bool imageRejected = ThrowsIo(() => ContextMenuNext.MenuIdFor(".mp3")) && ThrowsIo(() => ContextMenuNext.MenuIdFor(".mp4"));
+        bool contentRejected = ThrowsIo(() => ContextMenuNext.ContentMenuIdFor(".mp3")) && ThrowsIo(() => ContextMenuNext.ContentMenuIdFor(".webm"));
+        bool parentRejected = ThrowsIo(() => ContextMenuNext.ParentKeyFor(".wav")) && ThrowsIo(() => ContextMenuNext.ContentParentKeyFor(".mkv"));
+        bool mediaRejected = ThrowsIo(() => ContextMenuNext.MediaMenuIdFor(".png"))
+            && ThrowsIo(() => ContextMenuNext.MediaMenuIdFor(".pdf"))
+            && ThrowsIo(() => ContextMenuNext.MediaMenuIdFor(".yml"))
+            && ThrowsIo(() => ContextMenuNext.MediaMenuIdFor(".jpeg"));
+        return imageRejected && contentRejected && parentRejected && mediaRejected
+            && ContextMenuNext.MediaMenuIdFor(".MP3") == "Flip.Convert.Mp3"
+            && ContextMenuNext.MediaMenuIdFor("m4v") == "Flip.Convert.M4v";
+    }
+
+    static bool MediaDestinationCounts(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            [".mp3"] = ["WAV", "FLAC", "OGG", "M4A", "AAC"],
+            [".wav"] = ["MP3", "FLAC", "OGG", "M4A", "AAC"],
+            [".flac"] = ["MP3", "WAV", "OGG", "M4A", "AAC"],
+            [".ogg"] = ["MP3", "WAV", "FLAC", "M4A", "AAC"],
+            [".m4a"] = ["MP3", "WAV", "FLAC", "OGG", "AAC"],
+            [".aac"] = ["MP3", "WAV", "FLAC", "OGG", "M4A"],
+            [".wma"] = ["MP3", "WAV", "FLAC", "OGG", "M4A", "AAC"],
+            [".opus"] = ["MP3", "WAV", "FLAC", "OGG", "M4A", "AAC"],
+            [".mp4"] = ["MP3", "WAV", "MKV", "WEBM", "AVI", "MOV"],
+            [".mkv"] = ["MP4", "MP3", "WAV", "WEBM", "AVI", "MOV"],
+            [".webm"] = ["MP4", "MP3", "WAV", "MKV", "AVI", "MOV"],
+            [".avi"] = ["MP4", "MP3", "WAV", "MKV", "WEBM", "MOV"],
+            [".mov"] = ["MP4", "MP3", "WAV", "MKV", "WEBM", "AVI"],
+            [".wmv"] = ["MP4", "MP3", "WAV", "MKV", "WEBM", "AVI", "MOV"],
+            [".m4v"] = ["MP4", "MP3", "WAV", "MKV", "WEBM", "AVI", "MOV"]
+        };
+        var plans = ContextMenuNext.PlanMediaMenus(ffmpeg);
+        if (plans.Length != expected.Count) return false;
+        int audio = 0, video = 0;
+        foreach (var plan in plans)
+        {
+            string[] catalog = ContextMenuCatalog.ForExtension(plan.Extension, ffmpeg).Select(entry => entry.TargetFormat).ToArray();
+            string[] policy = Wheel.OrderFormats(Policy.Outputs(["flip.context" + plan.Extension], ffmpeg.Pandoc, ffmpeg.Office, ffmpeg.Ffmpeg));
+            if (!expected.TryGetValue(plan.Extension, out string[]? targets) || !plan.Formats.SequenceEqual(targets)) return false;
+            if (!plan.Formats.SequenceEqual(catalog) || !plan.Formats.SequenceEqual(policy)) return false;
+            if (Policy.Audio.Contains(plan.Extension)) audio += plan.Formats.Count;
+            else if (Policy.Video.Contains(plan.Extension)) video += plan.Formats.Count;
+            else return false;
+        }
+        return audio == 42 && video == 44 && audio + video == 86;
+    }
+
+    static bool MediaNoAliasOrForbidden(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        string[] audioAllowed = ["WAV", "MP3", "FLAC", "OGG", "M4A", "AAC"];
+        string[] videoAllowed = ["MP4", "MP3", "WAV", "MKV", "WEBM", "AVI", "MOV"];
+        string[] banned =
+        [
+            "PNG", "JPG", "JPEG", "WEBP", "BMP", "TIFF", "GIF", "PDF", "TXT", "HTML", "MD",
+            "JSON", "YAML", "XML", "CSV", "DOCX", "WMA", "OPUS", "WMV", "M4V",
+            "DXF", "PAGES", "PPT", "PPTX", "PDF/A"
+        ];
+        var plans = ContextMenuNext.PlanMediaMenus(ffmpeg);
+        if (plans.Count(plan => plan.SharesCommandTree) != 0) return false;
+        var paths = plans.Select(plan => plan.SubCommandsPath).ToArray();
+        if (paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != plans.Length) return false;
+        foreach (var plan in plans)
+        {
+            string source = plan.Extension.TrimStart('.').ToUpperInvariant();
+            string[] allowed = Policy.Audio.Contains(plan.Extension) ? audioAllowed : videoAllowed;
+            if (plan.Formats.Contains(source, StringComparer.Ordinal)) return false;
+            if (plan.Formats.Distinct(StringComparer.Ordinal).Count() != plan.Formats.Count) return false;
+            if (plan.Formats.Any(format => !allowed.Contains(format, StringComparer.Ordinal))) return false;
+            if (plan.Formats.Any(format => banned.Contains(format, StringComparer.Ordinal))) return false;
+            if (!plan.SubCommandsPath.Contains(@"\" + plan.Extension + @"\shell\" + plan.MenuId, StringComparison.Ordinal)) return false;
+            if (plan.Entries.Any(entry => entry.SourceExtension != plan.Extension)) return false;
+        }
+        return plans.SelectMany(plan => plan.Entries).Select(entry => entry.Id).Distinct(StringComparer.Ordinal).Count() == 86;
+    }
+
+    static bool MediaOrderMatchesCatalog()
+    {
+        foreach (var engines in ContextMenuCatalog.EngineSnapshot.AllCombinations())
+        {
+            var plans = ContextMenuNext.PlanMediaMenus(engines);
+            if (!engines.Ffmpeg)
+            {
+                if (plans.Length != 0) return false;
+                continue;
+            }
+            if (plans.Length != ContextMenuNext.MediaExtensions.Count) return false;
+            foreach (var plan in plans)
+            {
+                string[] policy = Wheel.OrderFormats(Policy.Outputs(["flip.context" + plan.Extension], engines.Pandoc, engines.Office, engines.Ffmpeg));
+                string[] catalog = ContextMenuCatalog.ForExtension(plan.Extension, engines).Select(entry => entry.TargetFormat).ToArray();
+                if (!plan.Formats.SequenceEqual(policy) || !plan.Formats.SequenceEqual(catalog)) return false;
+                if (!plan.Entries.Select(entry => entry.Title).SequenceEqual(plan.Formats.Select(format => "Converti in " + format))) return false;
+            }
+        }
+        return true;
+    }
+
+    static bool MediaEngineIndependence(ContextMenuCatalog.EngineSnapshot ffmpeg, ContextMenuCatalog.EngineSnapshot absent)
+    {
+        var reference = ContextMenuNext.PlanMediaMenus(ffmpeg);
+        if (reference.Length != 15 || reference.Sum(plan => plan.Formats.Count) != 86) return false;
+        if (ContextMenuNext.PlanMediaMenus(absent).Length != 0) return false;
+        foreach (bool pandoc in new[] { false, true })
+        foreach (bool office in new[] { false, true })
+        {
+            var without = ContextMenuNext.PlanMediaMenus(new ContextMenuCatalog.EngineSnapshot(pandoc, office, false));
+            if (without.Length != 0 || without.Sum(plan => plan.Formats.Count) != 0) return false;
+            var with = ContextMenuNext.PlanMediaMenus(new ContextMenuCatalog.EngineSnapshot(pandoc, office, true));
+            if (!MediaSameDestinations(reference, with)) return false;
+            var menu = ContextMenuCatalog.BuildMenu(new ContextMenuCatalog.EngineSnapshot(pandoc, office, false));
+            var ready = ContextMenuCatalog.BuildMenu(new ContextMenuCatalog.EngineSnapshot(pandoc, office, true));
+            foreach (string extension in ContextMenuNext.MediaExtensions)
+            {
+                if (menu.ContainsKey(extension) || !ready.ContainsKey(extension)) return false;
+                if (ContextMenuCatalog.ForExtension(extension, new ContextMenuCatalog.EngineSnapshot(pandoc, office, false)).Length != 0) return false;
+                if (Policy.Outputs(["flip.context" + extension], pandoc, office, false).Length != 0) return false;
+                if (Policy.Outputs(["flip.context" + extension], pandoc, office, true).Length == 0) return false;
+            }
+        }
+        return true;
+    }
+
+    static bool MediaSameDestinations(MediaMenuBlueprint[] left, MediaMenuBlueprint[] right)
+    {
+        if (left.Length != right.Length) return false;
+        for (int index = 0; index < left.Length; index++)
+            if (left[index].Extension != right[index].Extension || left[index].MenuId != right[index].MenuId
+                || !left[index].Formats.SequenceEqual(right[index].Formats)) return false;
+        return true;
+    }
+
+    static bool MediaCommandsOwnerAndKeys(ContextMenuCatalog.EngineSnapshot ffmpeg, string exe)
+    {
+        foreach (var blueprint in ContextMenuNext.PlanMediaMenus(ffmpeg))
+        {
+            string parent = @"Software\Classes\SystemFileAssociations\" + blueprint.Extension + @"\shell\" + blueprint.MenuId;
+            if (blueprint.ParentKey != parent) return false;
+            if (@"Software\Classes\" + blueprint.SubCommandsPath != blueprint.ParentKey) return false;
+            if (!blueprint.ParentKey.StartsWith(@"Software\Classes\", StringComparison.Ordinal)) return false;
+            var values = ContextMenuNext.DescribeMediaMenu(blueprint, exe);
+            if (Value(values, parent, "MUIVerb") != "Converti con Flip") return false;
+            if (Value(values, parent, "MUIVerb").Contains("Anteprima", StringComparison.Ordinal)) return false;
+            if (Value(values, parent, "ExtendedSubCommandsKey") != blueprint.SubCommandsPath) return false;
+            if (Value(values, parent, "MultiSelectModel") != "Single") return false;
+            if (Value(values, parent, "NeverDefault") != "") return false;
+            if (Value(values, parent, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            if (values.Any(value => value.Key.Equals(parent, StringComparison.OrdinalIgnoreCase) && value.Name.Length == 0)) return false;
+            if (values.Any(value => value.Key.Equals(parent + @"\command", StringComparison.OrdinalIgnoreCase))) return false;
+            if (Value(values, parent + @"\shell", ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            var keys = ContextMenuNext.PlannedMediaKeys(blueprint);
+            if (keys.Count != 2 + blueprint.Formats.Count * 2) return false;
+            if (keys.Contains(parent + @"\command")) return false;
+            foreach (string format in blueprint.Formats)
+            {
+                string verb = parent + @"\shell\" + format.ToLowerInvariant();
+                string command = "\"" + exe + "\" --convert-menu " + format + " --files \"%1\"";
+                if (Value(values, verb, "MUIVerb") != "Converti in " + format) return false;
+                if (Value(values, verb, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                if (Value(values, verb, "MultiSelectModel") != "Single" || Value(values, verb, "NeverDefault") != "") return false;
+                if (Value(values, verb + @"\command", "") != command) return false;
+                if (Value(values, verb + @"\command", ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                if (!command.Contains("--convert-menu " + format + " --files \"%1\"", StringComparison.Ordinal)) return false;
+                if (command.Contains("--convert ", StringComparison.Ordinal) || command.Contains("--multi", StringComparison.Ordinal)) return false;
+                if (!MenuConversion.TryParse(["--convert-menu", format, "--files", @"C:\Audio\brano" + blueprint.Extension], out var request, out _)) return false;
+                if (!request.Format.Equals(format, StringComparison.Ordinal) || request.File != @"C:\Audio\brano" + blueprint.Extension) return false;
+            }
+        }
+        return true;
+    }
+
+    static bool MediaIconsDoNotBlockBlueprint(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        if (ContextMenuNext.MediaIconFormats.Length != 11
+            || ContextMenuNext.MediaIconFormats.Distinct(StringComparer.Ordinal).Count() != 11) return false;
+        foreach (string format in ContextMenuNext.MediaIconFormats)
+            if (ContextMenuNext.IconFileName(format) != "flip-menu-" + format.ToLowerInvariant() + "-premium-v2.ico") return false;
+        if (ContextMenuNext.IconFileName("PNG") != "flip-menu-png-premium-v2.ico"
+            || ContextMenuNext.IconFileName("JPG") != ContextMenuPreview.IconFileName("JPG")
+            || ContextMenuNext.IconFileName("PDF") != ContextMenuPreview.IconFileName("PDF")
+            || ContextMenuNext.IconFileName("WEBP") != ContextMenuPreview.IconFileName("WEBP")
+            || ContextMenuNext.IconFileName("TXT") != "flip-menu-txt-premium-v2.ico"
+            || ContextMenuNext.IconFileName("GIF") != "flip-menu-gif-premium-v2.ico") return false;
+        foreach (string absent in new[] { "WMA", "OPUS", "WMV", "M4V" })
+            if (!ThrowsIo(() => ContextMenuNext.IconFileName(absent))) return false;
+        string directory = Path.Combine(Path.GetTempPath(), "Flip-Lab", "media-icons-" + Guid.NewGuid().ToString("N"));
+        string isolated = Path.Combine(directory, "Flip.exe");
+        var plans = ContextMenuNext.PlanMediaMenus(ffmpeg);
+        if (plans.Length != 15) return false;
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var plan in plans)
+        {
+            var values = ContextMenuNext.DescribeMediaMenu(plan, isolated);
+            foreach (string format in plan.Formats)
+            {
+                string icon = values.Single(value => value.Key.EndsWith(@"\shell\" + format.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase) && value.Name == "Icon").Data;
+                if (!icon.EndsWith(ContextMenuNext.IconFileName(format), StringComparison.OrdinalIgnoreCase)) return false;
+                if (File.Exists(icon)) return false;
+                used.Add(format);
+            }
+            if (values.Any(value => value.Name.Equals("Icon", StringComparison.OrdinalIgnoreCase)
+                && (value.Data.Contains("flip-menu-wma", StringComparison.OrdinalIgnoreCase)
+                    || value.Data.Contains("flip-menu-opus", StringComparison.OrdinalIgnoreCase)
+                    || value.Data.Contains("flip-menu-wmv", StringComparison.OrdinalIgnoreCase)
+                    || value.Data.Contains("flip-menu-m4v", StringComparison.OrdinalIgnoreCase)))) return false;
+        }
+        return used.SetEquals(ContextMenuNext.MediaIconFormats)
+            && !ContextMenuNext.MediaIconsReady(isolated)
+            && !Directory.Exists(directory);
+    }
+
+    static readonly string[] MediaPremiumV2IconFiles =
+    [
+        "flip-menu-mp3-premium-v2.ico", "flip-menu-wav-premium-v2.ico", "flip-menu-flac-premium-v2.ico",
+        "flip-menu-ogg-premium-v2.ico", "flip-menu-m4a-premium-v2.ico", "flip-menu-aac-premium-v2.ico",
+        "flip-menu-mp4-premium-v2.ico", "flip-menu-mkv-premium-v2.ico", "flip-menu-webm-premium-v2.ico",
+        "flip-menu-avi-premium-v2.ico", "flip-menu-mov-premium-v2.ico"
+    ];
+
+    static bool MediaIconsReadyGate()
+    {
+        if (MediaPremiumV2IconFiles.Length != ContextMenuNext.MediaIconFormats.Length) return false;
+        for (int index = 0; index < MediaPremiumV2IconFiles.Length; index++)
+            if (ContextMenuNext.IconFileName(ContextMenuNext.MediaIconFormats[index]) != MediaPremiumV2IconFiles[index]) return false;
+        if (PremiumV2IconFiles.Length != 20) return false;
+        foreach (string name in PremiumV2IconFiles.Concat(MediaPremiumV2IconFiles))
+        {
+            string source = Path.Combine(AppContext.BaseDirectory, name);
+            if (!File.Exists(source) || !ContextMenuPreview.IconIsValid(source)) return false;
+        }
+        string directory = Path.Combine(Path.GetTempPath(), "Flip-Lab", "media-ready-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            foreach (string name in MediaPremiumV2IconFiles)
+                File.Copy(Path.Combine(AppContext.BaseDirectory, name), Path.Combine(directory, name));
+            string exe = Path.Combine(directory, "Flip.exe");
+            if (!ContextMenuNext.MediaIconsReady(exe)) return false;
+            File.WriteAllBytes(Path.Combine(directory, "flip-menu-jpg.ico"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(directory, "flip-menu-pdf.ico"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(directory, "flip-menu-webp.ico"), [1, 2, 3, 4]);
+            if (!ContextMenuNext.MediaIconsReady(exe)) return false;
+            foreach (string omit in MediaPremiumV2IconFiles)
+            {
+                string missingDir = Path.Combine(Path.GetTempPath(), "Flip-Lab", "media-miss-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(missingDir);
+                try
+                {
+                    foreach (string name in MediaPremiumV2IconFiles)
+                    {
+                        if (name.Equals(omit, StringComparison.OrdinalIgnoreCase)) continue;
+                        File.Copy(Path.Combine(directory, name), Path.Combine(missingDir, name));
+                    }
+                    if (ContextMenuNext.MediaIconsReady(Path.Combine(missingDir, "Flip.exe"))) return false;
+                }
+                finally { try { Directory.Delete(missingDir, true); } catch (IOException) { } }
+            }
+            string corruptDir = Path.Combine(Path.GetTempPath(), "Flip-Lab", "media-bad-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(corruptDir);
+            try
+            {
+                foreach (string name in MediaPremiumV2IconFiles)
+                    File.Copy(Path.Combine(directory, name), Path.Combine(corruptDir, name));
+                File.WriteAllBytes(Path.Combine(corruptDir, "flip-menu-mkv-premium-v2.ico"), [1, 2, 3, 4]);
+                if (ContextMenuNext.MediaIconsReady(Path.Combine(corruptDir, "Flip.exe"))) return false;
+            }
+            finally { try { Directory.Delete(corruptDir, true); } catch (IOException) { } }
+            return ContextMenuNext.MediaIconsReady(exe);
+        }
+        finally { try { Directory.Delete(directory, true); } catch (IOException) { } }
+    }
+
+    static bool MediaLeavesPriorBlueprints(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        var native = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        var pandoc = new ContextMenuCatalog.EngineSnapshot(true, false, false);
+        string[] imagesBefore = ImagePlanSignature(native);
+        string[] contentNativeBefore = ContentPlanSignature(native);
+        string[] contentPandocBefore = ContentPlanSignature(pandoc);
+        var previewBefore = ContextMenuPreview.CreatePlan(@"C:\Programmi Flip\Flip.exe", native);
+        string previewId = previewBefore.Value(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue);
+        _ = ContextMenuNext.PlanMediaMenus(ffmpeg);
+        _ = ContextMenuNext.PlanMediaMenus(new ContextMenuCatalog.EngineSnapshot(true, true, true));
+        _ = ContextMenuNext.PlanMediaMenus(native);
+        if (!imagesBefore.SequenceEqual(ImagePlanSignature(native))) return false;
+        if (!imagesBefore.SequenceEqual(ImagePlanSignature(ffmpeg))) return false;
+        if (!contentNativeBefore.SequenceEqual(ContentPlanSignature(native))) return false;
+        if (!contentPandocBefore.SequenceEqual(ContentPlanSignature(pandoc))) return false;
+        if (!contentPandocBefore.SequenceEqual(ContentPlanSignature(new ContextMenuCatalog.EngineSnapshot(true, true, true)))) return false;
+        var previewAfter = ContextMenuPreview.CreatePlan(@"C:\Programmi Flip\Flip.exe", native);
+        if (previewAfter.Value(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) != previewId
+            || previewId != ContextMenuPreview.PrototypeId
+            || !previewBefore.Formats.SequenceEqual(previewAfter.Formats)) return false;
+        var imageKeys = ContextMenuNext.PlanImageMenus(native).SelectMany(ContextMenuNext.PlannedKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var imageIds = ContextMenuNext.PlanImageMenus(native).Select(plan => plan.MenuId).ToHashSet(StringComparer.Ordinal);
+        var contentKeys = ContextMenuNext.PlanContentMenus(pandoc).SelectMany(ContextMenuNext.PlannedContentKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var contentIds = ContextMenuNext.PlanContentMenus(pandoc).Select(plan => plan.MenuId).ToHashSet(StringComparer.Ordinal);
+        var media = ContextMenuNext.PlanMediaMenus(ffmpeg);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plan in media)
+        {
+            if (imageIds.Contains(plan.MenuId) || contentIds.Contains(plan.MenuId)) return false;
+            if (plan.MenuId == ContextMenuPreview.PrototypeId || plan.MenuId == "Flip.Convert") return false;
+            foreach (string key in ContextMenuNext.PlannedMediaKeys(plan))
+            {
+                if (!seen.Add(key) || imageKeys.Contains(key) || contentKeys.Contains(key)) return false;
+                if (key.Equals(ContextMenuPreview.OriginalMenuKey, StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith(ContextMenuPreview.OriginalMenuKey + @"\", StringComparison.OrdinalIgnoreCase)
+                    || key.Equals(ContextMenuPreview.ParentKey, StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith(ContextMenuPreview.ParentKey + @"\", StringComparison.OrdinalIgnoreCase)) return false;
+                if (!key.StartsWith(@"Software\Classes\SystemFileAssociations\", StringComparison.OrdinalIgnoreCase)) return false;
+                if (key.Contains(@"\CLSID", StringComparison.OrdinalIgnoreCase) || key.Contains("UserChoice", StringComparison.OrdinalIgnoreCase)) return false;
+                if (key.Contains(@"\*\shell\Flip.Convert", StringComparison.OrdinalIgnoreCase)) return false;
+            }
+        }
+        var png = ContextMenuNext.PlanImageMenus(native).Single(plan => plan.Extension == ".png");
+        var txt = ContextMenuNext.PlanContentMenus(native).Single(plan => plan.Extension == ".txt");
+        return png.MenuId == "Flip.Convert.Png"
+            && png.Formats.SequenceEqual(["PDF", "JPG", "WEBP", "BMP", "TIFF", "GIF"])
+            && txt.MenuId == "Flip.Convert.Txt"
+            && ContextMenuNext.ImageExtensions.SequenceEqual(Policy.Images)
+            && ContextMenuNext.ContentExtensions.SequenceEqual([".pdf", ".txt", ".json", ".yaml", ".yml", ".xml", ".csv"]);
+    }
+
+    static string[] ContentPlanSignature(ContextMenuCatalog.EngineSnapshot engines) =>
+        ContextMenuNext.PlanContentMenus(engines).Select(plan =>
+            plan.Extension + "|" + plan.MenuId + "|" + plan.ParentKey + "|" + plan.SharesCommandTree
+            + "|" + string.Join(",", plan.Formats)
+            + "|" + string.Join(";", ContextMenuNext.PlannedContentKeys(plan))).ToArray();
+
+    static void AddMediaMenuInstallChecks(Dictionary<string, bool> checks)
+    {
+        var ffmpeg = new ContextMenuCatalog.EngineSnapshot(false, false, true);
+        var absent = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        var native = new ContextMenuCatalog.EngineSnapshot(false, false, false);
+        var pandoc = new ContextMenuCatalog.EngineSnapshot(true, false, false);
+        string photo = @"C:\Audio\brano.mp3";
+        Check(checks, "media_install_ffmpeg_fifteen_menus", () => MediaInstallWithFfmpeg(ffmpeg));
+        Check(checks, "media_install_ffmpeg_absent_no_write", () => MediaInstallWithoutFfmpeg(ffmpeg, absent));
+        Check(checks, "media_install_icons_gate_no_write", () => MediaInstallIconsGate(ffmpeg));
+        Check(checks, "media_foreign_owner_no_write", () => MediaForeignOwnerPreserved(ffmpeg));
+        Check(checks, "media_install_rollback_restores", () => MediaInstallRollback(ffmpeg));
+        Check(checks, "media_remove_only_audio_video_keys", () => MediaRemoveOwnedOnly(ffmpeg, native));
+        Check(checks, "media_cli_rejects_combinations", () => MediaCliRejectsCombinations(ffmpeg, photo));
+        Check(checks, "media_unauthorized_path_refused", () => MediaUnauthorizedPathRefused(ffmpeg));
+        Check(checks, "media_prior_menus_unchanged", () => MediaPriorMenusUnchanged(ffmpeg, native, pandoc));
+        Check(checks, "media_flags_close_before_host", () => MediaFlagsCloseBeforeHost(photo));
+    }
+
+    static int RunMediaCommand(string[] args, string exe, IRegistryStore store, ContextMenuCatalog.EngineSnapshot engines, out string error)
+    {
+        var buffer = new StringWriter();
+        int code = ContextMenuNext.ApplyMedia(args, exe, store, engines, buffer);
+        error = buffer.ToString();
+        return code;
+    }
+
+    static bool PrepareMediaLab(string name, out string directory, out string exe)
+    {
+        directory = ImageLab(name);
+        Directory.CreateDirectory(directory);
+        exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+        return CopyMediaPremiumIcons(directory) && ContextMenuNext.MediaIconsReady(exe);
+    }
+
+    static bool PrepareMixedLab(string name, out string directory, out string exe)
+    {
+        directory = ImageLab(name);
+        Directory.CreateDirectory(directory);
+        exe = Path.GetFullPath(Path.Combine(directory, "Flip.exe"));
+        return CopyPremiumV2Icons(directory) && CopyMediaPremiumIcons(directory) && ContextMenuNext.MediaIconsReady(exe);
+    }
+
+    static bool CopyMediaPremiumIcons(string directory, string? omit = null, string? corrupt = null)
+    {
+        bool copied = false;
+        foreach (string name in MediaPremiumV2IconFiles)
+        {
+            string dest = Path.Combine(directory, name);
+            if (omit != null && name.Equals(omit, StringComparison.OrdinalIgnoreCase)) continue;
+            if (corrupt != null && name.Equals(corrupt, StringComparison.OrdinalIgnoreCase))
+            {
+                File.WriteAllBytes(dest, [1, 2, 3, 4]);
+                copied = true;
+                continue;
+            }
+            string source = Path.Combine(AppContext.BaseDirectory, name);
+            if (!File.Exists(source) || !ContextMenuPreview.IconIsValid(source)) return false;
+            File.Copy(source, dest, true);
+            copied = true;
+        }
+        return copied;
+    }
+
+    static bool MediaMenusMatch(MemoryRegistryStore store, string exe, ContextMenuCatalog.EngineSnapshot engines, int foreignKeys = 0)
+    {
+        var blueprints = ContextMenuNext.PlanMediaMenus(engines);
+        if (blueprints.Length != 15 || blueprints.Sum(plan => plan.Formats.Count) != 86) return false;
+        int commands = 0, audio = 0, video = 0;
+        var commandKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string full = Path.GetFullPath(exe);
+        foreach (var blueprint in blueprints)
+        {
+            if (store.Read(blueprint.ParentKey, "MUIVerb") != "Converti con Flip") return false;
+            if (store.Read(blueprint.ParentKey, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            if (store.Read(blueprint.ParentKey, "") != null) return false;
+            if (store.KeyExists(blueprint.ParentKey + @"\command")) return false;
+            if (store.Read(blueprint.ParentKey, "ExtendedSubCommandsKey") != blueprint.SubCommandsPath) return false;
+            if (store.Read(blueprint.ParentKey, "MultiSelectModel") != "Single") return false;
+            if (store.Read(blueprint.ParentKey, "NeverDefault") != "") return false;
+            if (store.Read(blueprint.ParentKey + @"\shell", ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            foreach (string format in blueprint.Formats)
+            {
+                string verb = blueprint.ParentKey + @"\shell\" + format.ToLowerInvariant();
+                string commandKey = verb + @"\command";
+                if (!commandKeys.Add(commandKey)) return false;
+                if (store.Read(commandKey, "") != "\"" + full + "\" --convert-menu " + format + " --files \"%1\"") return false;
+                if (store.Read(commandKey, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                string icon = store.Read(verb, "Icon") ?? "";
+                string expectedIcon = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(full)!, ContextMenuNext.IconFileName(format)));
+                if (!icon.Equals(expectedIcon, StringComparison.OrdinalIgnoreCase)) return false;
+                if (!icon.EndsWith("-premium-v2.ico", StringComparison.OrdinalIgnoreCase)) return false;
+                if (store.Read(verb, "MUIVerb") != "Converti in " + format) return false;
+                if (store.Read(verb, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+                if (store.Read(verb, "MultiSelectModel") != "Single" || store.Read(verb, "NeverDefault") != "") return false;
+                if (!MenuConversion.TryParse(["--convert-menu", format, "--files", @"C:\Audio\brano" + blueprint.Extension], out var request, out _)) return false;
+                if (request.Format != format || request.File != @"C:\Audio\brano" + blueprint.Extension) return false;
+                commands++;
+            }
+            foreach (string key in ContextMenuNext.PlannedMediaKeys(blueprint))
+                if (!store.KeyExists(key) || store.Read(key, ContextMenuNext.OwnerValue) != blueprint.MenuId) return false;
+            if (Policy.Audio.Contains(blueprint.Extension)) audio += blueprint.Formats.Count;
+            else if (Policy.Video.Contains(blueprint.Extension)) video += blueprint.Formats.Count;
+            else return false;
+        }
+        int expectedKeys = blueprints.Sum(plan => ContextMenuNext.PlannedMediaKeys(plan).Count);
+        return commands == 86 && audio == 42 && video == 44 && expectedKeys == 202
+            && store.KeyCount == expectedKeys + foreignKeys;
+    }
+
+    static bool MediaInstallWithFfmpeg(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        if (!PrepareMediaLab("media-install", out string directory, out string exe)) return false;
+        try
+        {
+            var store = new MemoryRegistryStore();
+            int code = RunMediaCommand([ContextMenuNext.InstallMediaCommand], exe, store, ffmpeg, out string error);
+            if (code != 0 || error.Length != 0 || !MediaMenusMatch(store, exe, ffmpeg)) return false;
+            string once = store.Export();
+            int again = RunMediaCommand(
+                [ContextMenuNext.InstallMediaCommand, ContextMenuNext.InstallMediaCommand],
+                exe, store, ffmpeg, out string againError);
+            if (again != 0 || againError.Length != 0 || store.Export() != once) return false;
+            var office = new MemoryRegistryStore();
+            ContextMenuNext.InstallMediaMenus(exe, new ContextMenuCatalog.EngineSnapshot(true, true, true), office);
+            return office.Export() == once;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool MediaInstallWithoutFfmpeg(ContextMenuCatalog.EngineSnapshot ffmpeg, ContextMenuCatalog.EngineSnapshot absent)
+    {
+        if (!PrepareMediaLab("media-no-ffmpeg", out string directory, out string exe)) return false;
+        try
+        {
+            if (ContextMenuNext.PlanMediaMenus(absent).Length != 0 || ContextMenuNext.PlanMediaMenus(ffmpeg).Length != 15) return false;
+            var sentinel = new MemoryRegistryStore();
+            sentinel.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            string before = sentinel.Export();
+            bool threw = false;
+            try { ContextMenuNext.InstallMediaMenus(exe, absent, sentinel); }
+            catch (IOException ex)
+            {
+                threw = ex.Message.Contains("FFmpeg assente", StringComparison.Ordinal)
+                    && ex.Message.Contains("Nessuna chiave è stata scritta", StringComparison.Ordinal)
+                    && !ex.Message.Contains("Icone non disponibili", StringComparison.Ordinal)
+                    && !ex.Message.Contains("non è atomica", StringComparison.Ordinal);
+            }
+            if (!threw || sentinel.Export() != before || sentinel.KeyExists(ContextMenuNext.MediaParentKeyFor(".mp3"))) return false;
+            var touch = new TouchRegistry();
+            int code = RunMediaCommand([ContextMenuNext.InstallMediaCommand], exe, touch, absent, out string error);
+            return code == 1
+                && touch.Calls == 0
+                && error.Contains("FFmpeg assente", StringComparison.Ordinal)
+                && error.Contains("Nessuna chiave è stata scritta", StringComparison.Ordinal)
+                && !error.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool MediaInstallIconsGate(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        foreach (string omit in MediaPremiumV2IconFiles)
+        {
+            string missing = ImageLab("media-install-miss");
+            Directory.CreateDirectory(missing);
+            try
+            {
+                if (!CopyMediaPremiumIcons(missing, omit)) return false;
+                string exe = Path.GetFullPath(Path.Combine(missing, "Flip.exe"));
+                if (ContextMenuNext.MediaIconsReady(exe)) return false;
+                if (!MediaIconInstallRefused(exe, ffmpeg)) return false;
+            }
+            finally { DeleteLab(missing); }
+        }
+        string corrupt = ImageLab("media-install-bad");
+        Directory.CreateDirectory(corrupt);
+        try
+        {
+            if (!CopyMediaPremiumIcons(corrupt, corrupt: "flip-menu-mkv-premium-v2.ico")) return false;
+            string exe = Path.GetFullPath(Path.Combine(corrupt, "Flip.exe"));
+            if (ContextMenuNext.MediaIconsReady(exe)) return false;
+            return MediaIconInstallRefused(exe, ffmpeg);
+        }
+        finally { DeleteLab(corrupt); }
+    }
+
+    static bool MediaIconInstallRefused(string exe, ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        var touch = new TouchRegistry();
+        bool refused = false;
+        try { ContextMenuNext.InstallMediaMenus(exe, ffmpeg, touch); }
+        catch (IOException ex) { refused = ex.Message.Contains("Icone non disponibili", StringComparison.Ordinal); }
+        if (!refused || touch.Calls != 0) return false;
+        var memory = new MemoryRegistryStore();
+        try { ContextMenuNext.InstallMediaMenus(exe, ffmpeg, memory); }
+        catch (IOException) { }
+        if (memory.KeyCount != 0) return false;
+        int code = RunMediaCommand([ContextMenuNext.InstallMediaCommand], exe, touch, ffmpeg, out string error);
+        return code == 1
+            && touch.Calls == 0
+            && error.Contains("Icone non disponibili", StringComparison.Ordinal)
+            && !error.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool MediaForeignOwnerPreserved(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        if (!PrepareMediaLab("media-foreign", out string directory, out string exe)) return false;
+        try
+        {
+            var parent = new MemoryRegistryStore();
+            string mp3 = ContextMenuNext.MediaParentKeyFor(".mp3");
+            parent.Write(mp3, ContextMenuNext.OwnerValue, "Altro");
+            parent.Write(mp3, "MUIVerb", "Non toccare");
+            if (!MediaInstallLeavesStore(exe, ffmpeg, parent)) return false;
+            var command = new MemoryRegistryStore();
+            string verb = ContextMenuNext.MediaParentKeyFor(".mkv") + @"\shell\mp4\command";
+            command.Write(verb, "", "notepad.exe \"%1\"");
+            command.Write(verb, ContextMenuNext.OwnerValue, "AltroProgramma");
+            return MediaInstallLeavesStore(exe, ffmpeg, command);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool MediaInstallLeavesStore(string exe, ContextMenuCatalog.EngineSnapshot engines, MemoryRegistryStore store)
+    {
+        string before = store.Export();
+        try { ContextMenuNext.InstallMediaMenus(exe, engines, store); return false; }
+        catch (IOException ex)
+        {
+            return ex.Message.Contains("preservata", StringComparison.Ordinal)
+                && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase)
+                && store.Export() == before;
+        }
+    }
+
+    static bool MediaInstallRollback(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        if (!PrepareMediaLab("media-rollback", out string directory, out string exe)) return false;
+        try
+        {
+            int totalWrites = ContextMenuNext.PlanMediaMenus(ffmpeg).Sum(plan => ContextMenuNext.DescribeMediaMenu(plan, exe).Count);
+            int midpoint = totalWrites / 2;
+            if (midpoint < 2 || midpoint >= totalWrites) return false;
+            Exception[] failures =
+            [
+                new IOException("errore simulato"),
+                new UnauthorizedAccessException("errore simulato"),
+                new SecurityException("errore simulato"),
+                new InvalidOperationException("errore simulato"),
+                new ArgumentException("errore simulato")
+            ];
+            foreach (var failure in failures)
+            {
+                var absent = new MemoryRegistryStore();
+                absent.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+                string before = absent.Export();
+                var fail = new FailAfterWriteStore(absent) { FailOn = midpoint, Failure = failure };
+                bool threw = false;
+                try { ContextMenuNext.InstallMediaMenus(exe, ffmpeg, fail); }
+                catch (Exception ex) when (ex.GetType() == failure.GetType())
+                {
+                    threw = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                        && !ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                        && !ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                        && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+                }
+                if (!threw || absent.Export() != before) return false;
+                if (absent.KeyExists(ContextMenuNext.MediaParentKeyFor(".mp3"))) return false;
+                if (absent.KeyExists(ContextMenuNext.MediaParentKeyFor(".mp4"))) return false;
+                if (absent.Read(ContextMenuPreview.OriginalMenuKey, "") != "Converti con Flip") return false;
+            }
+
+            var mp3 = ContextMenuNext.PlanMediaMenus(ffmpeg).Single(plan => plan.Extension == ".mp3");
+            var existing = new MemoryRegistryStore();
+            existing.Write(mp3.ParentKey, "MUIVerb", "Personalizzato");
+            existing.Write(mp3.ParentKey, "ExtendedSubCommandsKey", mp3.SubCommandsPath);
+            existing.Write(mp3.ParentKey, "MultiSelectModel", "Single");
+            existing.Write(mp3.ParentKey, "NeverDefault", "");
+            existing.Write(mp3.ParentKey, ContextMenuNext.OwnerValue, mp3.MenuId);
+            existing.Write(mp3.ParentKey, "Nota", "tenere");
+            existing.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            string beforeExisting = existing.Export();
+            var interrupted = new FailAfterWriteStore(existing) { FailOn = midpoint };
+            bool interruptedThrow = false;
+            try { ContextMenuNext.InstallMediaMenus(exe, ffmpeg, interrupted); }
+            catch (IOException ex)
+            {
+                interruptedThrow = ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+            }
+            if (!interruptedThrow || existing.Export() != beforeExisting) return false;
+            if (existing.KeyExists(ContextMenuNext.MediaParentKeyFor(".wav"))) return false;
+            if (existing.Read(mp3.ParentKey, "MUIVerb") != "Personalizzato" || existing.Read(mp3.ParentKey, "Nota") != "tenere") return false;
+
+            var partial = new MemoryRegistryStore();
+            partial.Write(mp3.ParentKey, "MUIVerb", "Personalizzato");
+            partial.Write(mp3.ParentKey, "ExtendedSubCommandsKey", mp3.SubCommandsPath);
+            partial.Write(mp3.ParentKey, "MultiSelectModel", "Single");
+            partial.Write(mp3.ParentKey, "NeverDefault", "");
+            partial.Write(mp3.ParentKey, ContextMenuNext.OwnerValue, mp3.MenuId);
+            partial.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            var corrupt = new FailAfterWriteStore(partial) { FailOn = midpoint, CorruptRestoreWrites = true };
+            bool partialSignaled = false;
+            try { ContextMenuNext.InstallMediaMenus(exe, ffmpeg, corrupt); }
+            catch (IOException ex)
+            {
+                partialSignaled = ex.Message.Contains("potrebbe essere parziale", StringComparison.Ordinal)
+                    && ex.Message.Contains("non è atomica", StringComparison.Ordinal)
+                    && ex.Message.Contains("errore simulato", StringComparison.Ordinal)
+                    && !ex.Message.Contains("garantito", StringComparison.OrdinalIgnoreCase);
+            }
+            return partialSignaled
+                && partial.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && partial.Export().Contains("#parziale", StringComparison.Ordinal);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool MediaRemoveOwnedOnly(ContextMenuCatalog.EngineSnapshot ffmpeg, ContextMenuCatalog.EngineSnapshot native)
+    {
+        if (!PrepareMixedLab("media-remove", out string directory, out string exe)) return false;
+        try
+        {
+            var store = new MemoryRegistryStore();
+            ContextMenuNext.InstallImageMenus(exe, native, store);
+            ContextMenuPreview.Install(PreviewPlan(native, exe), store);
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+            ContextMenuNext.InstallContentMenus(exe, native, store);
+            ContextMenuNext.InstallMediaMenus(exe, ffmpeg, store);
+            var mp3 = ContextMenuNext.PlanMediaMenus(ffmpeg).Single(plan => plan.Extension == ".mp3");
+            var opus = ContextMenuNext.PlanMediaMenus(ffmpeg).Single(plan => plan.Extension == ".opus");
+            string decoy = mp3.ParentKey + @"\shell\custom";
+            store.Write(decoy, "MUIVerb", "Esterno");
+            store.Write(decoy, ContextMenuNext.OwnerValue, "Altro");
+            store.Write(opus.ParentKey, ContextMenuNext.OwnerValue, "AltroProgramma");
+            store.Write(opus.ParentKey, "MUIVerb", "Non toccare");
+            int removed = RunMediaCommand([ContextMenuNext.RemoveMediaCommand], exe, store, native, out string error);
+            string after = store.Export();
+            int removedAgain = RunMediaCommand([ContextMenuNext.RemoveMediaCommand], exe, store, ffmpeg, out string againError);
+            string mp3Command = mp3.ParentKey + @"\shell\" + mp3.Formats[0].ToLowerInvariant() + @"\command";
+            string opusCommand = opus.ParentKey + @"\shell\" + opus.Formats[0].ToLowerInvariant() + @"\command";
+            bool kept = removed == 0 && error.Length == 0
+                && removedAgain == 0 && againError.Length == 0
+                && store.Export() == after
+                && store.KeyExists(mp3.ParentKey)
+                && store.KeyExists(decoy)
+                && store.Read(decoy, "MUIVerb") == "Esterno"
+                && !store.KeyExists(mp3Command)
+                && store.KeyExists(opus.ParentKey)
+                && !store.KeyExists(opusCommand)
+                && store.Read(opus.ParentKey, ContextMenuNext.OwnerValue) == "AltroProgramma"
+                && store.Read(opus.ParentKey, "MUIVerb") == "Non toccare"
+                && !store.KeyExists(ContextMenuNext.MediaParentKeyFor(".wav"))
+                && !store.KeyExists(ContextMenuNext.MediaParentKeyFor(".mp4"))
+                && !store.KeyExists(ContextMenuNext.MediaParentKeyFor(".mkv"))
+                && store.Read(ContextMenuNext.ParentKey, ContextMenuNext.OwnerValue) == ContextMenuNext.MenuId
+                && store.Read(ContextMenuNext.ParentKeyFor(".jpg"), ContextMenuNext.OwnerValue) == ContextMenuNext.MenuIdFor(".jpg")
+                && store.Read(ContextMenuNext.ContentParentKeyFor(".pdf"), ContextMenuNext.OwnerValue) == ContextMenuNext.ContentMenuIdFor(".pdf")
+                && store.Read(ContextMenuNext.ContentParentKeyFor(".txt"), ContextMenuNext.OwnerValue) == ContextMenuNext.ContentMenuIdFor(".txt")
+                && store.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId
+                && store.Read(ContextMenuPreview.ParentKey, "MUIVerb") == ContextMenuPreview.ParentVerb
+                && store.Read(ContextMenuPreview.OriginalMenuKey, "") == "Converti con Flip"
+                && store.Read(ContextMenuPreview.OriginalMenuKey + @"\command", "") == "\"C:\\Flip\\Flip.exe\" --files \"%1\"";
+            if (!kept) return false;
+
+            var clean = new MemoryRegistryStore();
+            ContextMenuNext.InstallMediaMenus(exe, ffmpeg, clean);
+            int installed = clean.KeyCount;
+            ContextMenuNext.RemoveMediaMenus(clean);
+            ContextMenuNext.RemoveMediaMenus(clean);
+            if (installed != 202 || clean.KeyCount != 0) return false;
+
+            var noIcons = new MemoryRegistryStore();
+            ContextMenuNext.InstallMediaMenus(exe, ffmpeg, noIcons);
+            foreach (string name in MediaPremiumV2IconFiles)
+                File.Delete(Path.Combine(directory, name));
+            if (ContextMenuNext.MediaIconsReady(exe)) return false;
+            ContextMenuNext.RemoveMediaMenus(exe, noIcons);
+            ContextMenuNext.RemoveMediaMenus(exe, noIcons);
+            return noIcons.KeyCount == 0
+                && !noIcons.KeyExists(ContextMenuNext.MediaParentKeyFor(".flac"))
+                && !noIcons.KeyExists(ContextMenuNext.MediaParentKeyFor(".webm"));
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool MediaCliRejectsCombinations(ContextMenuCatalog.EngineSnapshot ffmpeg, string photo)
+    {
+        if (!PrepareMediaLab("media-cli", out string directory, out string exe)) return false;
+        try
+        {
+            string[] extras =
+            [
+                "--install-context-menu-images", "--remove-context-menu-images",
+                "--install-context-menu-pdf-text-data", "--remove-context-menu-pdf-text-data",
+                "--install-context-menu-png", "--remove-context-menu-png",
+                "--install-context-menu-preview", "--remove-context-menu-preview",
+                "--install-context-menu", "--remove-context-menu",
+                "--convert-menu", "--convert", "--test-input", "--files", photo, "extra"
+            ];
+            var store = new TouchRegistry();
+            int both = RunMediaCommand(
+                [ContextMenuNext.InstallMediaCommand, ContextMenuNext.RemoveMediaCommand],
+                exe, store, ffmpeg, out string bothError);
+            if (both == 0 || store.Calls != 0 || !bothError.Contains("Nessuna modifica al Registro", StringComparison.Ordinal)) return false;
+            foreach (string extra in extras)
+            {
+                int install = RunMediaCommand([ContextMenuNext.InstallMediaCommand, extra], exe, store, ffmpeg, out string installError);
+                int remove = RunMediaCommand([extra, ContextMenuNext.RemoveMediaCommand], exe, store, ffmpeg, out string removeError);
+                if (install == 0 || remove == 0 || store.Calls != 0) return false;
+                if (!installError.Contains(extra, StringComparison.Ordinal) || !installError.Contains("Nessuna modifica al Registro", StringComparison.Ordinal)) return false;
+                if (!removeError.Contains(extra, StringComparison.Ordinal) || removeError.Contains("garantito", StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            var imageStore = new TouchRegistry();
+            int imageBlocked = ContextMenuNext.ApplyImages(
+                [ContextMenuNext.InstallImagesCommand, ContextMenuNext.InstallMediaCommand],
+                exe, imageStore, ffmpeg, new StringWriter());
+            var contentStore = new TouchRegistry();
+            int contentBlocked = ContextMenuNext.ApplyContent(
+                [ContextMenuNext.InstallContentCommand, ContextMenuNext.RemoveMediaCommand],
+                exe, contentStore, ffmpeg, new StringWriter());
+            return imageBlocked != 0
+                && contentBlocked != 0
+                && imageStore.Calls == 0
+                && contentStore.Calls == 0
+                && store.Calls == 0
+                && ContextMenuNext.IsMediaMenuCommand([ContextMenuNext.InstallMediaCommand])
+                && ContextMenuNext.IsMediaMenuCommand([ContextMenuNext.RemoveMediaCommand])
+                && !ContextMenuNext.IsMediaMenuCommand([ContextMenuNext.InstallImagesCommand])
+                && !ContextMenuNext.IsMediaMenuCommand([ContextMenuNext.InstallContentCommand])
+                && !ContextMenuNext.IsImageMenuCommand([ContextMenuNext.InstallMediaCommand])
+                && !ContextMenuNext.IsContentMenuCommand([ContextMenuNext.RemoveMediaCommand])
+                && !ContextMenuNext.IsPlannedCommand([ContextMenuNext.InstallMediaCommand])
+                && !ContextMenuPreview.IsPreviewCommand([ContextMenuNext.RemoveMediaCommand]);
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool MediaUnauthorizedPathRefused(ContextMenuCatalog.EngineSnapshot ffmpeg)
+    {
+        string[] rejected =
+        [
+            @"C:\dev\FLIP\src\Flip\bin\Release\net10.0-windows\Flip.exe",
+            @"C:\dev\FLIP\src\Flip\obj\Release\net10.0-windows\Flip.exe",
+            Path.Combine(Path.GetTempPath(), "Flip.exe"),
+            @"C:\Programmi Flip\Flip.exe",
+            Path.Combine(Path.GetTempPath(), "Flip-Lab", "Flip.dll"),
+            ""
+        ];
+        var store = new TouchRegistry();
+        foreach (string path in rejected)
+        {
+            int install = RunMediaCommand([ContextMenuNext.InstallMediaCommand], path, store, ffmpeg, out string installError);
+            int remove = RunMediaCommand([ContextMenuNext.RemoveMediaCommand], path, store, ffmpeg, out string removeError);
+            if (install == 0 || remove == 0 || store.Calls != 0) return false;
+            if (installError.Length == 0 || removeError.Length == 0) return false;
+            if (installError.Contains("garantito", StringComparison.OrdinalIgnoreCase)) return false;
+            bool installThrew = false;
+            bool removeThrew = false;
+            try { ContextMenuNext.InstallMediaMenus(path, ffmpeg, store); }
+            catch (IOException) { installThrew = true; }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or InvalidOperationException or ArgumentException) { installThrew = true; }
+            try { ContextMenuNext.RemoveMediaMenus(path, store); }
+            catch (IOException) { removeThrew = true; }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or InvalidOperationException or ArgumentException) { removeThrew = true; }
+            if (!installThrew || !removeThrew || store.Calls != 0) return false;
+        }
+        return true;
+    }
+
+    static bool MediaPriorMenusUnchanged(ContextMenuCatalog.EngineSnapshot ffmpeg, ContextMenuCatalog.EngineSnapshot native, ContextMenuCatalog.EngineSnapshot pandoc)
+    {
+        if (!PrepareMixedLab("media-prior", out string directory, out string exe)) return false;
+        try
+        {
+            string[] imagesBefore = ImagePlanSignature(native);
+            string[] contentBefore = ContentPlanSignature(native);
+            string[] contentPandocBefore = ContentPlanSignature(pandoc);
+            var previewBefore = ContextMenuPreview.CreatePlan(exe, native);
+            var store = new MemoryRegistryStore();
+            ContextMenuNext.InstallImageMenus(exe, native, store);
+            ContextMenuPreview.Install(previewBefore, store);
+            store.Write(ContextMenuPreview.OriginalMenuKey, "", "Converti con Flip");
+            store.Write(ContextMenuPreview.OriginalMenuKey + @"\command", "", "\"C:\\Flip\\Flip.exe\" --files \"%1\"");
+            ContextMenuNext.InstallContentMenus(exe, pandoc, store);
+            string before = store.Export();
+            int protectedKeys = store.KeyCount;
+            _ = ContextMenuNext.PlanMediaMenus(ffmpeg);
+            ContextMenuNext.InstallMediaMenus(exe, ffmpeg, store);
+            if (store.KeyCount != protectedKeys + 202) return false;
+            if (store.Read(ContextMenuNext.ParentKey, ContextMenuNext.OwnerValue) != ContextMenuNext.MenuId) return false;
+            if (store.Read(ContextMenuNext.ParentKeyFor(".jpeg"), "ExtendedSubCommandsKey") != ContextMenuNext.SubCommandsPathFor(".jpg")) return false;
+            if (store.Read(ContextMenuNext.ContentParentKeyFor(".yml"), "ExtendedSubCommandsKey") != ContextMenuNext.ContentSubCommandsPathFor(".yaml")) return false;
+            if (store.Read(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) != ContextMenuPreview.PrototypeId) return false;
+            if (store.Read(ContextMenuPreview.OriginalMenuKey + @"\command", "") != "\"C:\\Flip\\Flip.exe\" --files \"%1\"") return false;
+            ContextMenuNext.RemoveMediaMenus(exe, store);
+            ContextMenuNext.RemoveMediaMenus(exe, store);
+            if (store.Export() != before) return false;
+            if (store.KeyExists(ContextMenuNext.MediaParentKeyFor(".aac"))) return false;
+            if (store.KeyExists(ContextMenuNext.MediaParentKeyFor(".m4v"))) return false;
+            var mp3 = ContextMenuNext.PlanMediaMenus(ffmpeg).Single(plan => plan.Extension == ".mp3");
+            var blocked = new ContextMenuPlan(exe, mp3.Formats.ToArray(), ContextMenuNext.DescribeMediaMenu(mp3, exe));
+            var touch = new TouchRegistry();
+            var memory = new MemoryRegistryStore();
+            bool refused = false;
+            try { ContextMenuNext.Install(blocked, touch); }
+            catch (IOException ex) { refused = ex.Message.Contains("Nessuna chiave", StringComparison.Ordinal) && ex.Message.Contains("audio e video", StringComparison.Ordinal); }
+            try { ContextMenuNext.Install(blocked, memory); }
+            catch (IOException) { }
+            var previewAfter = ContextMenuPreview.CreatePlan(exe, native);
+            return refused
+                && touch.Calls == 0
+                && memory.KeyCount == 0
+                && imagesBefore.SequenceEqual(ImagePlanSignature(native))
+                && imagesBefore.SequenceEqual(ImagePlanSignature(ffmpeg))
+                && contentBefore.SequenceEqual(ContentPlanSignature(native))
+                && contentPandocBefore.SequenceEqual(ContentPlanSignature(pandoc))
+                && contentPandocBefore.SequenceEqual(ContentPlanSignature(new ContextMenuCatalog.EngineSnapshot(true, true, true)))
+                && previewBefore.Formats.SequenceEqual(previewAfter.Formats)
+                && previewAfter.Value(ContextMenuPreview.ParentKey, ContextMenuPreview.OwnerValue) == ContextMenuPreview.PrototypeId;
+        }
+        finally { DeleteLab(directory); }
+    }
+
+    static bool MediaFlagsCloseBeforeHost(string photo)
+    {
+        string wire = MenuConversion.Serialize(new MenuConversion.Request("MP3", photo));
+        foreach (string flag in new[] { ContextMenuNext.InstallMediaCommand, ContextMenuNext.RemoveMediaCommand })
+        {
+            if (!ContextMenuNext.IsMediaMenuCommand([flag])) return false;
+            if (ContextMenuNext.IsImageMenuCommand([flag]) || ContextMenuNext.IsContentMenuCommand([flag])) return false;
+            if (ContextMenuNext.IsPlannedCommand([flag]) || ContextMenuPreview.IsPreviewCommand([flag])) return false;
+            if (Program.OpensWheelOnStartup([flag]) || Program.OpensPanelOnStartup([flag])) return false;
+            if (Program.OpensWheelOnStartup([flag, "--files", photo])) return false;
+            if (Program.OpensPanelOnStartup([flag, "--multi", "--files", photo])) return false;
+        }
+        return Program.PipeName == "Flip.Local.Flip.v2"
+            && Program.DesktopMutexName == "Local\\Flip.Desktop.v2"
+            && MenuConversion.MenuPipeName == Program.PipeName + ".menu"
+            && MenuConversion.MenuPipeName == "Flip.Local.Flip.v2.menu"
+            && Ipc.Classify(null) == Ipc.Kind.None
+            && Ipc.Classify("exit") == Ipc.Kind.Exit
+            && Ipc.Classify(wire) == Ipc.Kind.Files
+            && MenuConversion.TryDeserialize(wire, out var request, out _)
+            && request.Format == "MP3"
+            && request.File == photo
+            && !Program.PipeName.Contains("audio-video", StringComparison.OrdinalIgnoreCase)
+            && !Program.DesktopMutexName.Contains("audio-video", StringComparison.OrdinalIgnoreCase)
+            && !MenuConversion.MenuPipeName.Contains("audio-video", StringComparison.OrdinalIgnoreCase)
+            && !Program.OpensWheelOnStartup(["--convert-menu", "MP3", "--files", photo])
+            && !Program.OpensPanelOnStartup(["--convert-menu", "WAV", "--multi", "--files", photo])
+            && Program.OpensWheelOnStartup(["--files", photo])
+            && Program.OpensPanelOnStartup(["--multi", "--files", photo]);
+    }
+
+    static bool ThrowsIo(Action action)
+    {
+        try { action(); return false; }
+        catch (IOException) { return true; }
     }
 
     sealed class TouchRegistry : IRegistryStore
