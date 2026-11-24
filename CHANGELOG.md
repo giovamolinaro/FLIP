@@ -2,9 +2,14 @@
 
 ## Unreleased
 
-Not yet released. Development branch `sviluppo-personalizzato` at `e6cfcf049277a30f93f8842a5f5769f0af01d697`. This work is on FLIP and is distinct from the public 0.5.1 package. The software, repository, CLI, and implemented context menus remain FLIP. FLIX is the planned name of the finished architecture and is not available.
+Not yet released, and not yet committed past `6d6a16e`. Development branch `sviluppo-personalizzato`. This work is distinct from the public FLIP 0.5.1 package. The product identity in this working tree is FLIX: `src/Flix/Flix.csproj`, namespace `Flix`. It is not a downloadable release. The remote repository is still named FLIP. Upstream AURA releases v0.6.0 and v0.6.1 are not releases of this fork. See [Publication status](docs/PUBLICATION-STATUS.md).
 
-Unreleased is the `sviluppo-personalizzato` line of this fork. Its documented historical base is FLIP 0.5.1. Upstream AURA releases v0.6.0 and v0.6.1 are not releases of this fork and not FLIX. See [Publication status](docs/PUBLICATION-STATUS.md).
+- Complete the identity: `Flix.exe`, assembly product FLIX, progress window **FLIX — Conversione**, parent menu **Converti con FLIX**, namespace `Flix`, project `src/Flix/Flix.csproj`.
+- Register `flix-xf.ico` only on the parent menu. Destination icons are `flix-menu-*-premium-v2.ico`. The white monogram is faint on a light menu; the approved artwork was not recolored.
+- New registry values are `FlixOwner`, `FlixCreatedAncestors`, and preview id `Flix.Convert.Preview` with `FlixPrototype`. Historical names used to recognize and remove this application's own keys live only in `LegacyIdentity`. The original `*\shell\Flip.Convert` menu and a preview owned by someone else stay in place.
+- Accept `Flix.exe` from `%LOCALAPPDATA%\Programs\Flix` and from an existing `%LOCALAPPDATA%\Programs\Flip` layout. Write new diagnostic logs under `%LOCALAPPDATA%\Flix\logs` without deleting the old log folder.
+- M5.5 document menus and the M6 removal of the wheel, tray, startup, resident host, mutexes and legacy IPC are in this working tree. M7 has not started. The retired installer scripts are archived outside the repository. They are not a FLIX installer. The `Install-FLIP.cmd` of the published 0.5.1 ZIP is a different file, inside that ZIP.
+- The working tree no longer contains generated `src/Flix/bin` and `src/Flix/obj`, the previous `app` folder, or the three unused non-premium icons `flix-menu-jpg.ico`, `flix-menu-pdf.ico` and `flix-menu-webp.ico`. Historical local evidence, the old `Flip.exe` output and the unused wheel cover and tick assets are archived outside the repository. M7 has not started.
 
 - M4 (`8c4b758`): Add a central progress window for conversions started from context menus.
 - M5.1 (`b0bb71e`): Add the initial PNG context-menu path.
@@ -13,11 +18,11 @@ Unreleased is the `sviluppo-personalizzato` line of this fork. Its documented hi
 - M5.4 (`e6cfcf0`): Add audio and video context menus: 8 audio extensions, 7 video extensions, 15 menus in total, and 86 destination commands. Installation depends on a detected local FFmpeg. Destination entries use premium icons. Registry writes use FlipOwner checks and best-effort backup/rollback. Add the dedicated test suite and conversion matrix.
 - Isolated real testing of M5.4 (M5.4.6) in the FlipLab Windows account passed in the recorded perimeter: installation of 15 menus; registration of 86 destination commands; WAV and MP4 menus shown; conversions MP4 → MKV, MP4 → MP3, and WAV → MP3; source integrity; output validation and decode; menu removal; absence of the 15 keys after removal; post-removal visual check. That run did not exercise all 86 conversions by hand.
 
-Still open on this branch, and not introduced here: M5.5 document context menus; M5.6 overall functional testing; M6 legacy removal; M7 Setup Manager; a later global icon revision.
+Still open, and not done here: the FlipLab visual check of the XF icon; a hand run of every destination; M7 Setup Manager. The M6 Explorer run already recorded five conversions, cancellation, interprocess concurrency and menu removal.
 
 ## 0.5.1
 
-- Fix `Install.ps1` when run directly from the extracted ZIP. After installing the .NET 10 Windows Desktop Runtime x64, extract the entire ZIP, double-click `Install-FLIP.cmd`, then start FLIP from the Desktop or Start menu shortcut.
+- Fix `Install.ps1` when run directly from the extracted ZIP. After installing the .NET 10 Windows Desktop Runtime x64, extract the entire ZIP, double-click `Install-FLIP.cmd` inside that ZIP, then start FLIP from the Desktop or Start menu shortcut. That command is the installer in the published ZIP. It is not a script of this working tree.
 - Detect FFmpeg placed in `%LOCALAPPDATA%\Flip\tools`. Restart FLIP after copying `ffmpeg.exe` to that folder to enable audio and video conversions.
 - Default to A4 when converting DOCX to PDF through Pandoc and LibreOffice.
 - Explain how to open the wheel in the multiple-conversion window, using the configured shortcut.

@@ -14,13 +14,13 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Locked restore
-        run: dotnet restore src/Flip/Flip.csproj --locked-mode -r win-x64
+        run: dotnet restore src/Flix/Flix.csproj --locked-mode -r win-x64
       - name: Source and history privacy patterns
         shell: pwsh
         run: ./scripts/Audit-Repository.ps1
       - name: Build
-        run: dotnet build src/Flip/Flip.csproj -c Release --no-restore
+        run: dotnet build src/Flix/Flix.csproj -c Release --no-restore
       - name: Input, policy and audio checks
-        run: dotnet src/Flip/bin/Release/net10.0-windows/Flip.dll --test-input --evidence evidence/ci
+        run: src/Flix/bin/Release/net10.0-windows/Flix.exe --test-input --evidence evidence/ci
 # Full conversion tests also require Pandoc and LibreOffice.
 # CI does not install them, configure startup, or publish binaries.

@@ -1,13 +1,14 @@
 param([switch]$DocumentEngine,[string]$PandocArchive,[string]$Output)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
-$project=Join-Path $root 'src\Flip\Flip.csproj'
+$project=Join-Path $root 'src\Flix\Flix.csproj'
 if(!$Output){$Output=Join-Path $root 'app'}
 $Output=[IO.Path]::GetFullPath($Output)
-$existing=Join-Path $Output 'Flip.dll'
+if(Test-Path -LiteralPath (Join-Path $Output 'Flip.exe')){throw 'La cartella di destinazione contiene una build precedente. Scegli -Output su una cartella nuova. Nessun file è stato cancellato.'}
+$existing=Join-Path $Output 'Flix.dll'
 if(Test-Path -LiteralPath $existing){
     try{$probe=[IO.File]::Open($existing,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None);$probe.Dispose()}
-    catch{throw 'Output is in use or not writable. Exit Flip or choose -Output with a new folder before building.'}
+    catch{throw 'Output is in use or not writable. Close FLIX or choose -Output with a new folder before building.'}
 }
 if($DocumentEngine){
     $toolRoot=Join-Path $root 'tools'
@@ -34,7 +35,7 @@ try{
     & dotnet restore $project --configfile (Join-Path $root 'NuGet.Config') --locked-mode -r win-x64
     if($LASTEXITCODE -ne 0){throw 'Restore failed.'}
     & dotnet publish $project -c Release -r win-x64 --self-contained false --no-restore -o $output
-    if($LASTEXITCODE -ne 0){throw 'Publish failed. Exit Flip before rebuilding app/.'}
+    if($LASTEXITCODE -ne 0){throw 'Publish failed. Close FLIX or choose a new -Output folder before rebuilding.'}
     $pandoc=Get-ChildItem -Path (Join-Path $root 'tools\pandoc') -Filter pandoc.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if($DocumentEngine -and $pandoc){
         New-Item -ItemType Directory -Path (Join-Path $output 'tools'),(Join-Path $output 'licenses\pandoc') -Force | Out-Null
@@ -45,6 +46,6 @@ try{
         }
     }
     Copy-Item -LiteralPath (Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md') -Destination $output
-    Write-Output ('Built '+$output+'\Flip.exe. Run with --ui for the file panel; --background for tray only.')
+    Write-Output ('Built '+$output+'\Flix.exe.')
 }
 finally{Pop-Location}

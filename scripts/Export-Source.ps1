@@ -8,9 +8,9 @@ try{
     if($LASTEXITCODE -ne 0){throw 'Git status failed.'}
     if($changes.Count){throw 'Commit reviewed source changes before exporting. Private ignored build files need not be added.'}
     if(!$Output){
-        [xml]$project=Get-Content -LiteralPath (Join-Path $root 'src\Flip\Flip.csproj') -Raw
+        [xml]$project=Get-Content -LiteralPath (Join-Path $root 'src\Flix\Flix.csproj') -Raw
         $version=[string]$project.Project.PropertyGroup.Version
-        $Output=Join-Path $root ('dist\Flip-'+$version+'-source.zip')
+        $Output=Join-Path $root ('dist\Flix-'+$version+'-source.zip')
     }
     $Output=[IO.Path]::GetFullPath($Output)
     New-Item -ItemType Directory -Path (Split-Path -Parent $Output) -Force | Out-Null

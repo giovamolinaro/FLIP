@@ -1,8 +1,10 @@
 # Risk register
 
-Scope of this update: branch `sviluppo-personalizzato` at `e6cfcf049277a30f93f8842a5f5769f0af01d697`, consolidated through M5.4. FLIP is the current name of the repository, the application, the CLI, and the existing registrations. FLIP 0.5.1 is the documented historical base of this fork. It is not the latest upstream public release and not a release of this branch. FLIX is the approved future architecture. It is not distributed, it is not the 0.5.1 historical base, and it is not an upstream AURA release. See [docs/PUBLICATION-STATUS.md](docs/PUBLICATION-STATUS.md).
+The tables below are the DOC-01.5-C reading of branch `sviluppo-personalizzato` at `e6cfcf049277a30f93f8842a5f5769f0af01d697`, consolidated through M5.4. They name the tree as it was at that reading. They are not a description of the current working tree.
 
-The first table is the beta-candidate record. Its names are the existing identifiers. The file has no severity, probability, or impact scale, and this update does not add one. A historical row is kept when it is still pertinent. A planned phase does not close a row. DOC-01.5-C read the code and the documents listed at the end. It did not rebuild, run FLIP, run tests, or write the registry. Reported counts below are those already recorded. They were not reproduced in DOC-01.5-C.
+The product in the current working tree is FLIX: `src/Flix/Flix.csproj`, namespace `Flix`, executable `Flix.exe`. It is not a release. The remote repository is still named FLIP. FLIP 0.5.1 remains the documented historical base of this fork. It is not the latest upstream public release and not a release of this branch. M6 is present in the working tree and is not a release. M7 has not started. See [docs/PUBLICATION-STATUS.md](docs/PUBLICATION-STATUS.md).
+
+DOC-01.5-C did not rebuild, run the application, run tests, or write the registry. Reported counts below are those already recorded. They were not reproduced in DOC-01.5-C and are not reattributed to FLIX. A cell that says M6 has not started, or that the executable is still Flip, belongs to the reading at `e6cfcf0`. It is not the state of this working tree.
 
 ## Beta-candidate record
 
@@ -50,7 +52,7 @@ These limits belong to «M5 registry mutation». They are properties of the curr
 4. Exit code 0 from `ApplyImages`, `ApplyContent`, or `ApplyMedia` means the requested procedure returned without a registry exception. By itself it is not proof that every planned key is absent.
 5. Registry operations need an independent check afterwards. The in-memory suites do not replace a read of the real hive.
 
-The older `ShellIntegration` path is not this model. It has no `FlipOwner`. When the stored command matches, removal uses `DeleteSubKeyTree`. When the command differs, the key is preserved. That path is still reachable and is legacy.
+The older `ShellIntegration` path is not this model. The DOC-01.5-C reading found no `FlipOwner` on it: when the stored command matched, removal used `DeleteSubKeyTree`; when the command differed, the key was preserved. That file is not in `src/Flix`. The protected key `Software\Classes\*\shell\Flip.Convert` remains a key this application does not rewrite.
 
 ### Post-removal observation in M5.4.6
 
@@ -65,7 +67,7 @@ This register does not classify that first reading as a demonstrated defect of t
 | Document | Use in this register |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Current behavior of menus, engines, registry, legacy host, and test limits. |
-| [ROADMAP.md](ROADMAP.md) | M5.4 implemented in its recorded perimeter. M5.5 and M5.6 open. M6 and M7 not started. |
+| [ROADMAP.md](ROADMAP.md) | M5.1 through M5.5 are in the working tree. M5.6 remains open. M6 has removed the legacy process components. M7 has not started. |
 | [TECHNICAL_DECISIONS.md](TECHNICAL_DECISIONS.md) | Historical decisions still in the branch, and the approved future architecture. |
 | [TEST_RESULTS.md](TEST_RESULTS.md) | Historical results, reported M5.4.5 figures, and the M5.4.6 laboratory record. Not re-run here. |
 | [docs/FINAL-ARCHITECTURE.md](docs/FINAL-ARCHITECTURE.md) | Binding FLIX direction, legacy inventory, M5.4.6 perimeter, and M7 requirements that are not implemented. |

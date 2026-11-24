@@ -1,8 +1,8 @@
-param([string]$Destination = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\Flip'))
+param([string]$Destination = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\Flix'))
 $ErrorActionPreference = 'Stop'
-if (!(Test-Path -LiteralPath (Join-Path $Destination 'Flip.exe'))) { throw 'Install FLIP before adding the document engine.' }
-if (Get-Process Flip -ErrorAction SilentlyContinue) { throw 'Exit FLIP before installing its document engine.' }
-$work = Join-Path ([IO.Path]::GetTempPath()) ('flip-engine-' + [Guid]::NewGuid().ToString('N'))
+if (!(Test-Path -LiteralPath (Join-Path $Destination 'Flix.exe'))) { throw 'Serve una installazione FLIX prima di aggiungere il motore documenti. Le cartelle precedenti non vengono modificate.' }
+if (Get-Process Flix -ErrorAction SilentlyContinue) { throw 'Chiudi FLIX prima di aggiungere il motore documenti.' }
+$work = Join-Path ([IO.Path]::GetTempPath()) ('flix-engine-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
     $archive = Join-Path $work 'pandoc.zip'
@@ -22,5 +22,5 @@ try {
 } finally {
     $resolved = [IO.Path]::GetFullPath($work)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
-    if ($resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path $resolved -Leaf).StartsWith('flip-engine-')) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+    if ($resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path $resolved -Leaf).StartsWith('flix-engine-')) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }

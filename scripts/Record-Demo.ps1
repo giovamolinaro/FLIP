@@ -11,7 +11,7 @@ if($Width % 2 -or $Height % 2){throw 'Use even capture dimensions for H.264.'}
 $ffmpeg=Get-Command ffmpeg -ErrorAction SilentlyContinue
 if(!$ffmpeg){throw 'FFmpeg must already be installed. This script does not download software.'}
 $root=Split-Path -Parent $PSScriptRoot
-if(!$Output){$Output=Join-Path $root ('_local\demo\flip-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'.mp4')}
+if(!$Output){$Output=Join-Path $root ('_local\demo\flix-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'.mp4')}
 $Output=[IO.Path]::GetFullPath($Output)
 if(Test-Path -LiteralPath $Output){throw 'Output already exists. Choose a new filename.'}
 New-Item -ItemType Directory -Path (Split-Path -Parent $Output) -Force | Out-Null

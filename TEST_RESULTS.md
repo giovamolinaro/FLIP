@@ -1,14 +1,14 @@
 # Validation
 
-The sections from “Current: 0.4.0-beta.3” through “Release gate” are historical records. Each heading names the candidate, and the date where one was written. Those results are kept as recorded. “Current” in the first heading means current when that record was produced. It does not describe branch `sviluppo-personalizzato`, and this file does not declare a new public release. **FLIP 0.5.1** is the documented historical base of this fork. It is not the latest upstream public release. See [docs/PUBLICATION-STATUS.md](docs/PUBLICATION-STATUS.md).
+The sections from “Current: 0.4.0-beta.3” through “Release gate” are historical records. Each heading names the candidate, and the date where one was written. Those results are kept as recorded. “Current” in the first heading means current when that record was produced. It does not describe branch `sviluppo-personalizzato`, and this file does not declare a new public release. File names, project paths and registry value names inside those records are the names of the build that produced them. The current working tree is FLIX (`src/Flix/Flix.csproj`). **FLIP 0.5.1** is the documented historical base of this fork. It is not the latest upstream public release. See [docs/PUBLICATION-STATUS.md](docs/PUBLICATION-STATUS.md).
 
 ## Current: 0.4.0-beta.3
 
-Custom single-key shortcuts and both held-key/drag input orders are covered by **94 passing input checks**; the conversion engine has **99 passing checks**. See [the current input/install report](docs/CUSTOM-SHORTCUTS.md) for exact evidence and native acceptance limits. The earlier results below describe previous candidates.
+Custom single-key shortcuts and both held-key/drag input orders are covered by **94 passing input checks**; the conversion engine has **99 passing checks**. The extended record is archived outside the repository as `FLIX-AUDIT-ARCHIVE-20261124/docs/CUSTOM-SHORTCUTS.md`. The counts above stay as recorded. The earlier results below describe previous candidates.
 
 ## 0.4.0-beta.2 audit, 23 October 2026
 
-See [the current audit](docs/AUDIT-2026-10-23.md) for results and limits. The current gesture is `<>`, not Ctrl. The historical results below describe beta.1 and do not certify native behavior of beta.2.
+The extended audit is archived outside the repository as `FLIX-AUDIT-ARCHIVE-20261124/docs/AUDIT-2026-10-23.md`. The counts in that record stay as recorded. The gesture of that candidate is `<>`, not Ctrl. The historical results below describe beta.1 and do not certify native behavior of beta.2.
 
 ## Historical: 0.4.0-beta.1
 Date: 22 October 2026. Raw evidence stays under ignored _local/evidence and _local/review; it is not exported.
@@ -53,7 +53,7 @@ The sound changed from a low tone to an original **40 ms tic**. Its waveform pas
 
 ## Release gate
 LibreOffice was upgraded from 24.2.5.2 to 26.8.1.1 with explicit authorization. The official installer SHA256 matched its published checksum and Windows SDK SignTool verified the Authenticode signature by The Document Foundation with zero errors/warnings. The personal profile was backed up privately. Installation returned 3010 (restart required); no automatic restart was performed.
-The new engine passed the full corrected suite above. This is pre-restart evidence on synthetic documents, not qualification of arbitrary untrusted documents. Executable release remains blocked pending post-restart checks, broader native acceptance and redistribution work. See PUBLIC_RELEASE_REVIEW.md.
+The new engine passed the full corrected suite above. This is pre-restart evidence on synthetic documents, not qualification of arbitrary untrusted documents. Executable release remains blocked pending post-restart checks, broader native acceptance and redistribution work. The review named here is archived outside the repository as `FLIX-AUDIT-ARCHIVE-20261124/PUBLIC_RELEASE_REVIEW.md`.
 
 ## Development branch test status
 
@@ -77,7 +77,7 @@ The same number 86 appears in two different measurements further below: conversi
 
 | Reported result | What the source counts | Reconciliation | Evidence |
 |-----------------|------------------------|----------------|----------|
-| Release build: zero errors, zero warnings | `scripts/Build.ps1` publishes with `dotnet publish -c Release`. CI builds with `dotnet build src/Flip/Flip.csproj -c Release`. The record does not say which invocation was used. | Reported outcome only. No log in the tree. | B, C |
+| Release build: zero errors, zero warnings | `scripts/Build.ps1` publishes with `dotnet publish -c Release`. CI at M5.4.5 time built with `dotnet build src/Flip/Flip.csproj -c Release` (historical FLIP path; current tree: `src/Flix/Flix.csproj`). The record does not say which invocation was used. | Reported outcome only. No log in the tree. | B, C |
 | `InputTests`: 234/234 | `--test-input` calls `InputTests.Run` unless a matrix switch is also present. A static list of the names that `Run` puts in its dictionary is 234 distinct checks: 111 in the body of `Run`, 121 `Check` registrations, and 2 IPC checks. | The reported 234/234 matches that dictionary size. The 234 include legacy gesture, wheel, and policy checks together with the in-memory menu checks in section 2. They are not 234 M5.4 conversions. | B for the pass count; A for the name count; C for execution |
 | Audio/video matrix: 86/86 | `--test-input --media-matrix-only` calls `MediaMatrixTests.Run`. With FFmpeg, the suite’s own success condition requires 42 audio cells and 44 video cells. | 42 + 44 = 86 conversion cells of `ConversionEngine`. Not menu registration and not Explorer clicks. | B for the pass count; A for the 42/44 split; C for execution |
 | Negative tests: 55 | On that same FFmpeg-present path, `MediaMatrixTests` records 55 negative and boundary rows: 40 policy refusals, 4 unreadable files, 5 silent-video cases, 2 spaced paths, 2 naming cases, 1 simulated FFmpeg absence, and 1 residual `.flip-job` check. | The reported 55 matches that row count. These rows are separate from the 86 conversion cells. The record states 55; it does not state a separate pass fraction beyond that figure. | B for the figure; A for the row count; C for execution |

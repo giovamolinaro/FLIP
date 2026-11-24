@@ -1,16 +1,16 @@
 # Architettura FLIP → FLIX
 
-Documento vincolante per la direzione del prodotto finale. Distingue l’**obiettivo architetturale FLIX** dallo **stato implementativo effettivo** del software FLIP sul branch di sviluppo, dopo il consolidamento di M5.4.
+Documento vincolante per la direzione del prodotto finale. Distingue l’**applicazione FLIX** nell’albero di lavoro dallo **stato ancora aperto**, che è la distribuzione M7.
 
-**FLIP** è il nome attuale del software, del repository e dei comandi esistenti.
+**FLIX** è l'unica identità del prodotto in questo albero: `src/Flix/Flix.csproj`, namespace `Flix`, eseguibile `Flix.exe`, menu **Converti con FLIX**. Non è una release distribuita. M7 non è iniziata.
 
-**FLIX** è il nome pianificato del prodotto finale. L’implementazione integrale non è conclusa. FLIX non è un prodotto disponibile o distribuito.
+Il repository remoto si chiama ancora `FLIP`. Il pacchetto storico **FLIP 0.5.1** e le release upstream su `thetinyfoundry/FLIP` conservano il nome con cui sono state pubblicate.
 
-**Qualificazione delle release.** La base storica documentata di questo fork è **FLIP 0.5.1**. L’ultima release pubblica upstream verificata è **FLIP v0.6.1 AURA Edition**, sul repository `thetinyfoundry/FLIP`. Quella release appartiene a quel repository upstream. FLIX resta l’architettura pianificata di questo fork e non è distribuita. Questo fork non ha GitHub Release proprie. Il codice presente sul branch remoto di sviluppo non è una GitHub Release. Dettaglio: [PUBLICATION-STATUS.md](PUBLICATION-STATUS.md).
+**Qualificazione delle release.** La base storica documentata di questo fork è **FLIP 0.5.1**. L’ultima release pubblica upstream verificata è **FLIP v0.6.1 AURA Edition**, sul repository `thetinyfoundry/FLIP`. Quella release appartiene a quel repository upstream. FLIX è il prodotto di questo albero di lavoro e non è distribuito. Questo fork non ha GitHub Release proprie. Il codice presente sul branch remoto di sviluppo non è una GitHub Release. Dettaglio: [PUBLICATION-STATUS.md](PUBLICATION-STATUS.md).
 
-Questo allineamento documentale non modifica il codice, i nomi degli eseguibili né le chiavi di Registro. Le decisioni di destinazione già approvate restano in vigore. La loro attuazione segue le fasi ancora aperte.
+Il rebranding ha allineato il nome visibile, l’eseguibile, il progetto, il namespace, le icone di menu e gli identificativi di Registro delle installazioni nuove. Non ha cambiato le licenze, i comandi di conversione né il comportamento del motore. Le decisioni di M7 restano da attuare. I letterali storici indispensabili stanno in `LegacyIdentity`.
 
-Il comportamento di ruota, tray e avvio automatico, storico e ancora presente nel codice, è descritto nelle sezioni «Platform and input», «Dynamic visual feedback» e «Build/publication» di [TECHNICAL_DECISIONS.md](../TECHNICAL_DECISIONS.md). La rimozione è prevista in M6. Il dettaglio dei collegamenti è nella [sezione 6](#6-collegamenti-documentali).
+Il comportamento storico di ruota, tray e avvio automatico è descritto nelle sezioni «Platform and input», «Dynamic visual feedback» e «Build/publication» di [TECHNICAL_DECISIONS.md](../TECHNICAL_DECISIONS.md). Quei componenti non fanno più parte dell’applicazione in esecuzione. Gli script di installazione ritirati sono archiviati fuori dal repository: non installano FLIX e non attivano tray o avvio automatico. Il dettaglio dei collegamenti è nella [sezione 6](#6-collegamenti-documentali).
 
 ## Categorie
 
@@ -19,8 +19,8 @@ Il comportamento di ruota, tray e avvio automatico, storico e ancora presente ne
 | **Implementato** | Presente nel branch attuale. |
 | **Collaudato** | Verificato nel perimetro di collaudo indicato, e solo in quello. |
 | **Pianificato** | Approvato, non ancora realizzato. |
-| **Legacy ancora presente** | Ancora nel codice attuale. Non è l’esperienza definitiva. |
-| **Destinato alla rimozione** | Rimozione prevista in M6, non in questo allineamento documentale. |
+| **Legacy storico** | Descritto nei documenti precedenti. Non fa parte dell’applicazione in esecuzione. |
+| **Rimosso da M6** | Ruota, tray, gesture, avvio automatico, host residente, mutex e IPC non sono nel processo attuale. |
 
 Una voce può rientrare in più categorie.
 
@@ -33,36 +33,36 @@ L’esperienza definitiva prevista per FLIX è un convertitore integrato nel **m
 Percorso utente desiderato, come obiettivo di prodotto:
 
 1. Selezione dei file.
-2. **Converti con Flip**.
+2. **Converti con FLIX**.
 3. Scelta del formato di destinazione.
 4. Conversione.
 5. Finestra di avanzamento M4 (finestra centrale M4).
 6. Risultato.
 
-La voce di menu resta **«Converti con Flip»**, nome del software attuale. Questo documento non rinomina la voce, gli eseguibili o le chiavi di Registro.
+La voce di menu dell’applicazione in esecuzione è **«Converti con FLIX»**. L’icona immediatamente a sinistra è il monogramma XF bianco. Il progetto e il namespace sono `Flix`. Il repository remoto e il pacchetto storico restano con il nome pubblicato.
 
-Il percorso descrive la destinazione approvata. Il codice attuale lo realizza solo nella parte già classificata come implementata nella sezione 2, e convive ancora con i componenti legacy della sezione 3.
+Il percorso è implementato nell’albero di lavoro per i menu e per la finestra M4. La distribuzione resta M7.
 
 ---
 
 ## 2. Stato implementativo effettivo del branch
 
-Stato del branch di sviluppo al consolidamento di M5.4.
+Stato dell’albero di lavoro dopo M6 e dopo il rebranding. Non è committato oltre `6d6a16e`.
 
 | Elemento | Categoria | Stato |
 |----------|-----------|--------|
-| Finestra di avanzamento M4 | Implementato | Presente. Ruolo e layout restano quelli concordati per M4. |
-| M5.1 — menu PNG | Implementato | Presente nel branch. |
-| M5.2 — menu immagini | Implementato | Presenti nel branch. |
-| M5.3 — menu PDF, TXT e dati | Implementato | Presenti nel branch. |
-| M5.4 — menu audio e video | Implementato | Presenti nel branch. Dipendono da FFmpeg. |
+| Finestra di avanzamento M4 | Implementato | Presente. Titolo visibile **FLIX — Conversione**. Layout invariato. |
+| M5.1 — menu PNG | Implementato | Presente. |
+| M5.2 — menu immagini | Implementato | Presenti. |
+| M5.3 — menu PDF, TXT e dati | Implementato | Presenti. |
+| M5.4 — menu audio e video | Implementato | Presenti. Dipendono da FFmpeg. |
 | Collaudo isolato M5.4.6 | Collaudato | PASS, nel perimetro descritto sotto. |
-| M5.5 — menu documenti | Pianificato | Ancora da implementare. |
-| M5.6 — collaudo complessivo | Pianificato | Ancora aperto. |
-| M6 — rimozione dei componenti legacy | Pianificato | Non iniziata. |
+| M5.5 — menu documenti | Implementato | Presenti se Pandoc è rilevato. |
+| M5.6 — collaudo complessivo | Collaudato nel perimetro M6 | Cinque conversioni, annullamento, concorrenza e rimozione. Non ogni destinazione a mano. |
+| M6 — rimozione dei componenti legacy | Implementato | Fatto nel processo in esecuzione. Collaudo Esplora file PASS nel perimetro registrato. |
+| Identità FLIX | Implementato | `Flix.exe`, **Converti con FLIX**, `flix-xf.ico` sul solo menu padre. Controllo visivo FlipLab non eseguito. |
 | M7 — Setup Manager e distribuzione | Pianificato | Non implementato. |
-| Nome di prodotto FLIX | Pianificato | Non implementato integralmente. Il software, il repository e i comandi restano FLIP. |
-| Revisione globale delle icone | Pianificato | Fase dedicata successiva. Nessun numero di fase è assegnato in questo documento. |
+| Revisione globale delle icone | Parziale | Icona padre XF approvata. Destinazioni ancora premium-v2. |
 
 ### Perimetro del collaudo M5.4.6
 
@@ -93,22 +93,21 @@ Le conversioni native restano previste senza obbligo di Pandoc, LibreOffice o FF
 
 ---
 
-## 3. Componenti legacy ancora presenti
+## 3. Componenti legacy
 
-Questi componenti sono nel codice attuale. Restano fino a M6. DOC-01.1 non li rimuove.
+Questi componenti non fanno parte dell’applicazione in esecuzione. Restano descritti nella storia tecnica. `scripts/Install.ps1` non è in questo albero e non è stato convertito in un installer FLIX.
 
-| Componente | Categorie |
-|------------|-----------|
-| Ruota di selezione | Legacy ancora presente. Destinato alla rimozione in M6. |
-| Audio della ruota | Legacy ancora presente. Destinato alla rimozione in M6. |
-| Gesture da tastiera e drag-and-drop della ruota | Legacy ancora presente. Destinato alla rimozione in M6. |
-| Tray (area notifiche) | Legacy ancora presente. Destinato alla rimozione in M6. |
-| Avvio con Windows | Legacy ancora presente. Destinato alla rimozione in M6. |
-| Processo residente a riposo | Legacy ancora presente. Destinato alla rimozione in M6. |
-| Mutex | Legacy ancora presente. Destinato alla rimozione in M6. |
-| IPC tra processi | Legacy ancora presente. Destinato alla rimozione in M6. |
+| Componente | Stato |
+|------------|--------|
+| Ruota di selezione | Rimossa dal processo. |
+| Audio della ruota | Rimosso dal processo. |
+| Gesture da tastiera e drag-and-drop della ruota | Rimossi dal processo. |
+| Tray (area notifiche) | Rimossa dal processo. |
+| Avvio con Windows | Rimosso dal processo. Gli script di installazione ritirati non sono in questo albero e non lo registrano. |
+| Processo residente a riposo | Rimosso. La finestra M4 è la finestra principale e la chiusura termina il processo. |
+| Mutex e IPC tra processi | Rimossi dal percorso di conversione. |
 
-L’IPC attuale è realizzato con named pipe. Questo documento non definisce un sostituto e non anticipa nuovi nomi di eseguibili o di chiavi di Registro.
+Il menu originale `Software\Classes\*\shell\Flip.Convert` non viene riscritto né cancellato. L’anteprima nuova è `Flix.Convert.Preview`. L’anteprima precedente viene rimossa solo se il marcatore coincide con l’identificativo storico di questa applicazione. Un’anteprima di un altro proprietario resta.
 
 ---
 
@@ -116,16 +115,15 @@ L’IPC attuale è realizzato con named pipe. Questo documento non definisce un 
 
 Numerazione e dipendenze: [ROADMAP.md](../ROADMAP.md). Lo stato del branch è nella sezione 2.
 
-- **M6** non inizia prima della chiusura di **M5**.
-- **M7** non inizia prima della chiusura di **M6**.
+- **M7** non è iniziata. Il rebranding non l’ha avviata.
 
-| Fase | Categoria | Contenuto previsto |
-|------|-----------|--------------------|
-| M5.5 | Pianificato | Menu documenti, con i motori disponibili. Non iniziata. |
-| M5.6 | Pianificato | Collaudo funzionale complessivo. Ancora aperto. Il PASS di M5.4.6 non lo sostituisce. |
-| M6 | Pianificato. Destinato alla rimozione per i componenti della sezione 3. | Pulizia definitiva: rimozione di ruota, suoni, gesture, drag-and-drop, tray, avvio automatico, processo residente, mutex e IPC. Processo effimero. Gestione della concorrenza. Eliminazione del codice morto. Collaudo completo. Non iniziata. |
-| M7 | Pianificato | Pacchetto installabile e FLIP Setup Manager, con i requisiti della sezione 5. Non implementato. |
-| Revisione globale delle icone | Pianificato | Fase dedicata successiva a questo allineamento. Il requisito delle icone premium resta approvato nella sezione 5. |
+| Fase | Categoria | Contenuto |
+|------|-----------|-----------|
+| M5.5 | Implementato | Menu documenti, con i motori disponibili. |
+| M5.6 | Collaudato nel perimetro M6 | Cinque conversioni reali, annullamento, concorrenza e rimozione. Non ogni destinazione a mano. |
+| M6 | Implementato | Pulizia del processo: niente ruota, suoni, gesture, tray, avvio automatico, host, mutex e IPC. |
+| Rebranding | Implementato, controllo visivo aperto | Nome FLIX, icona XF sul menu padre. FlipLab non eseguito. |
+| M7 | Pianificato | Pacchetto installabile e Setup Manager, con i requisiti della sezione 5. Non implementato. |
 
 ---
 
@@ -135,7 +133,7 @@ I requisiti di questa sezione sono vincolanti per il prodotto finale. Descrivono
 
 ### Esperienza utente nel menu contestuale
 
-- Una voce principale: **«Converti con Flip»**.
+- Una voce principale: **«Converti con FLIX»**, con l’icona XF bianca immediatamente a sinistra. Il segno è tenue su un menu chiaro; il disegno approvato non è stato ricolorato.
 - **Sottomenu** con i soli formati di destinazione **realmente disponibili** sul sistema (motori installati, capacità native, dipendenze opzionali assenti → voce non mostrata).
 - **Icone premium** distinte per voce e formato, coerenti con la qualità visiva del prodotto. La revisione globale delle icone è una fase dedicata successiva (sezione 4). Il requisito resta approvato.
 - Dopo la scelta del formato si apre la **finestra centrale M4** (flusso di conversione esistente), **invariata** nel ruolo e nel layout concordato per M4.
@@ -150,15 +148,15 @@ I requisiti di questa sezione sono vincolanti per il prodotto finale. Descrivono
 | Drag-and-drop sulla ruota | **Nessun drag-and-drop** della ruota |
 | Area notifiche | **Nessuna tray** permanente |
 | Avvio con Windows | **Nessun avvio automatico** |
-| Processo in background | **Nessun processo FLIP residente** a riposo |
+| Processo in background | **Nessun processo residente** a riposo |
 
-Queste esclusioni valgono per il prodotto finale. Nel branch attuale i componenti corrispondenti sono legacy ancora presenti e destinati alla rimozione in M6.
+Queste esclusioni valgono per l’applicazione in esecuzione. Il processo di una conversione termina con la finestra M4.
 
 ### Ciclo di vita del processo
 
 1. **Avvio** solo quando l’utente richiede una conversione dal menu contestuale (o da operazioni esplicite del Setup Manager che lanciano il convertitore).
 2. **Esecuzione** del flusso M4 per la richiesta corrente.
-3. **Chiusura** del processo FLIP al termine della finestra M4 (nessuna permanenza idle).
+3. **Chiusura** del processo al termine della finestra M4 (nessuna permanenza idle).
 
 ### Correttezza e sicurezza dei file
 
@@ -170,9 +168,9 @@ Queste esclusioni valgono per il prodotto finale. Nel branch attuale i component
 - **Windows 10 e Windows 11** (ambiente di riferimento x64, allineato al codebase .NET/WPF).
 - **Installazione per utente** tramite hive **HKCU** (menu contestuali e configurazione per utente, senza richiedere servizi amministrativi per l’uso ordinario).
 
-### FLIP Setup Manager
+### FLIX Setup Manager
 
-Requisito approvato della fase **M7**. Nel branch attuale il Setup Manager **non è implementato**.
+Requisito approvato della fase **M7**. Non è implementato e non è stato avviato. Il prodotto che quel manager dovrà installare è FLIX. Il testo sotto è il requisito, non un installer esistente.
 
 Un **unico comando PowerShell** avvia il **Setup Manager interattivo** (bootstrap definitivo in fase **M7**; vedi [Bootstrap e distribuzione](#bootstrap-e-distribuzione)).
 
@@ -180,12 +178,12 @@ Un **unico comando PowerShell** avvia il **Setup Manager interattivo** (bootstra
 
 | Voce | Azione |
 |------|--------|
-| `[1]` | **Installa FLIP** (attivazione automatica del menu contestuale al termine dell’installazione) |
-| `[2]` | **Aggiorna FLIP** |
+| `[1]` | **Installa FLIX** (attivazione automatica del menu contestuale al termine dell’installazione) |
+| `[2]` | **Aggiorna FLIX** |
 | `[3]` | **Attiva / disattiva menu contestuale** (voce dinamica, vedi sotto) |
-| `[4]` | **Ripara FLIP** |
-| `[5]` | **Disinstalla FLIP** |
-| `[6]` | **Mostra stato FLIP** |
+| `[4]` | **Ripara FLIX** |
+| `[5]` | **Disinstalla FLIX** |
+| `[6]` | **Mostra stato FLIX** |
 | `[0]` | **Esci** |
 
 #### Voce `[3]` dinamica (stessa sessione PowerShell)
@@ -196,7 +194,7 @@ Il menu si **aggiorna senza riavviare PowerShell** dopo ogni operazione che camb
 |----------------|-------------------------|
 | Menu contestuale **attivo** | Disattiva menu contestuale |
 | Menu contestuale **disattivo** | Attiva menu contestuale |
-| FLIP **non installato** | Indicazione di eseguire prima `[1] Installa FLIP` (la voce non esegue attivazione finché non c’è installazione) |
+| FLIX **non installato** | Indicazione di eseguire prima `[1] Installa FLIX` (la voce non esegue attivazione finché non c’è installazione) |
 
 ### Disinstallazione
 
@@ -204,11 +202,11 @@ La disinstallazione tramite Setup Manager deve:
 
 **Rimuovere**
 
-- Voci di **menu contestuale** di proprietà FLIP (registrazione HKCU).
-- **Eseguibili e icone** installati dal pacchetto FLIP.
+- Voci di **menu contestuale** di proprietà di FLIX (registrazione HKCU), comprese le chiavi precedenti riconosciute da `LegacyIdentity`.
+- **Eseguibili e icone** installati dal pacchetto FLIX.
 - **Componenti e configurazioni di installazione** non condivisi con altri programmi.
 
-**Non eliminare automaticamente** l’intero contenuto di `%LOCALAPPDATA%\Flip` senza distinguere:
+**Non eliminare automaticamente** l’intero contenuto di `%LOCALAPPDATA%\Flix` né di `%LOCALAPPDATA%\Flip` senza distinguere:
 
 | Categoria | Trattamento |
 |-----------|-------------|
@@ -224,17 +222,17 @@ La disinstallazione tramite Setup Manager deve:
 
 ### Aggiornamento e ripristino
 
-Per `[2] Aggiorna FLIP` e procedure correlate:
+Per `[2] Aggiorna FLIX` e procedure correlate:
 
 - **Backup** del pacchetto e/o degli artefatti di installazione **prima dell’aggiornamento**.
 - **Conservazione** dello stato **attivo/disattivo** del menu contestuale attraverso l’aggiornamento.
-- **Ripristino delle chiavi di Registro** originali FLIP in caso di rollback o riparazione.
+- **Ripristino delle chiavi di Registro** di FLIX in caso di rollback o riparazione.
 - **Ripristino della versione precedente** del binario quando il rollback è richiesto e il backup è disponibile.
-- **Verifica delle collisioni** con chiavi di registro **estranee** (non sovrascrivere voci non di proprietà FLIP).
+- **Verifica delle collisioni** con chiavi di registro **estranee** (non sovrascrivere voci non di proprietà di FLIX).
 - **Nessuna eliminazione** di file personali dell’utente durante update/rollback.
 - **Nessuna promessa di atomicità** dell’aggiornamento senza garanzie implementative reali (documentare il comportamento effettivo in M7).
 
-Dettaglio operativo: la voce `[4] Ripara FLIP` riallinea registrazione del menu, percorsi e integrità dell’installazione senza toccare le conversioni dell’utente.
+Dettaglio operativo: la voce `[4] Ripara FLIX` riallinea registrazione del menu, percorsi e integrità dell’installazione senza toccare le conversioni dell’utente.
 
 <a id="bootstrap-e-distribuzione"></a>
 
@@ -269,17 +267,16 @@ I menu audio e video già presenti nel branch (M5.4) sono la categoria aggiuntiv
 
 ### Sequenza delle fasi
 
-- **M6** non inizia prima della chiusura di **M5**.
-- **M7** non inizia prima della chiusura di **M6**.
+M7 non è iniziata.
 
 ---
 
 ## 6. Collegamenti documentali
 
 - Decisioni tecniche: [TECHNICAL_DECISIONS.md](../TECHNICAL_DECISIONS.md).
-  - Sezioni sul comportamento storico e ancora presente nel codice, comprese ruota, tray e avvio automatico: «Platform and input», «Dynamic visual feedback» e «Build/publication».
-  - La sezione «Capabilities» è allineata allo stato attuale del branch: distingue la base storica documentata **FLIP 0.5.1** dallo sviluppo consolidato **M5.1–M5.4**; le conversioni audio e video dei menu contestuali sono condizionate alla disponibilità di **FFmpeg**. Le sezioni storiche nello stesso file descrivono decisioni precedenti e componenti legacy ancora presenti nel codice. Lo stato sintetico del branch resta anche nella sezione 2 di questo documento.
-  - La sezione «Definitive product architecture (approved)» non è una sezione storica. Indica questo documento come fonte vincolante per l’architettura futura **FLIX**, non per un prodotto già disponibile o distribuito.
+  - Sezioni sul comportamento storico di ruota, tray e avvio automatico: «Platform and input», «Dynamic visual feedback» e «Build/publication». Quei componenti non sono nel processo attuale. Le sezioni restano decisioni storiche.
+  - La sezione «Capabilities» distingue la base storica **FLIP 0.5.1** dallo sviluppo dei menu. Le conversioni audio e video restano condizionate a **FFmpeg**. Lo stato sintetico dell’albero di lavoro è la sezione 2 di questo documento.
+  - La sezione «Definitive product architecture (approved)» indica questo documento come fonte vincolante. FLIX, in quell’accezione di prodotto distribuito, non è pubblicato.
   - In quel file non esiste una sezione «Stato storico».
-- Piano di numerazione e dipendenze M5–M7: [ROADMAP.md](../ROADMAP.md). La tabella iniziale riporta gli stati aggiornati fino a **M5.4**. La sezione 2 di questo documento sintetizza lo stato implementativo del branch al consolidamento di M5.4. **FLIX** è l’architettura di prodotto futura descritta da questo documento, non un prodotto già pubblicato.
-- Requisiti di Setup Manager, disinstallazione e bootstrap: sezioni [FLIP Setup Manager](#flip-setup-manager), [Disinstallazione](#disinstallazione) e [Bootstrap e distribuzione](#bootstrap-e-distribuzione) di questo documento.
+- Piano di numerazione e dipendenze M5–M7: [ROADMAP.md](../ROADMAP.md). La tabella iniziale riporta M5, M6 e il rebranding. M7 resta futura. **FLIX** è l’applicazione dell’albero di lavoro, non una release pubblicata.
+- Requisiti di Setup Manager, disinstallazione e bootstrap: sezioni [FLIX Setup Manager](#flix-setup-manager), [Disinstallazione](#disinstallazione) e [Bootstrap e distribuzione](#bootstrap-e-distribuzione) di questo documento.

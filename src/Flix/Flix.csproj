@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RestorePackagesPath>../../packages</RestorePackagesPath>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <AssemblyName>Flix</AssemblyName>
+    <ApplicationIcon>flix-xf.ico</ApplicationIcon>
+    <Product>FLIX</Product>
+    <AssemblyTitle>FLIX</AssemblyTitle>
+    <Description>FLIX converte file dal menu contestuale di Esplora file.</Description>
+    <Version>0.5.1</Version>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/_/src/Flix</PathMap>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PDFtoImage" Version="5.4.0" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="flix-xf.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-jpg-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-pdf-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-webp-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-png-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-bmp-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-tiff-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-gif-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-txt-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-json-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-yaml-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-xml-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-csv-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-html-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-md-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-docx-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-epub-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-odt-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-rtf-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-fb2-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-rst-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-mp3-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-wav-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-flac-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-ogg-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-m4a-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-aac-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-mp4-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-mkv-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-webm-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-avi-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="flix-menu-mov-premium-v2.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
